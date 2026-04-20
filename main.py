@@ -30,7 +30,26 @@ URL = "https://docs.google.com/spreadsheets/d/1dJWM1dBQ5DfWQBIRKHja_YoMH_JeNXVu0
 @st.cache_resource
 def conectar():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    creds = ServiceAccountCredentials.from_json_keyfile_name(resource_path("llave.json"), scope)
+    
+    # Extraemos los datos de Secrets
+    creds_dict = dict(st.secrets["gcp_service_account"])
+    
+    # --- LIMPIEZA PROFUNDA DE LA LLAVE ---
+    # Esto elimina cualquier rastro de \n de texto y lo vuelve a montar limpio
+    raw_key = creds_dict["private_key"]
+    clean_key = raw_key.replace("\\n", "\n")
+    
+    # Si por error se pegó todo en una línea sin saltos, esto no funcionaría,
+    # así que forzamos la estructura que Google espera:
+    if "-----BEGIN PRIVATE KEY-----" in clean_key:
+        inner_key = clean_key.replace("-----BEGIN PRIVATE KEY-----", "").replace("-----END PRIVATE KEY-----", "").strip()
+        # Quitamos espacios y saltos que pudieran haber quedado dentro
+        inner_key = "".join(inner_key.split())
+        # Montamos la llave perfecta
+        final_key = f"-----BEGIN PRIVATE KEY-----\n{inner_key}\n-----END PRIVATE KEY-----\n"
+        creds_dict["private_key"] = final_key
+
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     return gspread.authorize(creds).open_by_url(URL)
 
 if 'autenticado' not in st.session_state:
