@@ -1,0 +1,13 @@
+{
+  "type": "service_account",
+  "project_id": "erp-electrico",
+  "private_key_id": "1f44e28ec1692a74fcbcf5bcfbf89e654290c5c0",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDC41pnI0r5UEVR\nlRpOLXO5vvk4LVb55Q4RiJl89D1ci7kDG/n9JaSxg5FxgfkPSuW6PT6/tau0tD2W\nyJvy39BeduiCsMkPUxY1nBoIICX04sOgbPq0QSm2KmlAXytILt9Kq0Asu93E4yi4\n5BAsNPfnQcdnOuZavWcHAoIPf0z78u4A29dVaheFdzpbT0KWW/Z9t7x+6qye97kU\nHi4CV6/bvwgSDHsdAjDdJyaqDkmJUDbpuJf8vF/HpwopKBEhq8UYxtyh6/1aaIYi\niKFlfzhSGVNuoocElqESfgdmu1c9EH/JM8z5p6WTwEMuxMUZOPaEx6e0dkkpVxKu\nyL8mdPfVAgMBAAECggEAI06PFTpWnd5GAKazklA3tAH+IohMRo+RwelubS3OZBLI\nHOEXpB4KvUIpuleiqHuYLOplkNO33M/+jG+hmRmlJUgDjZG7izQxRNsX+DrixX/D\nky/LJ5bamK8MTGYxcC1VtLBbuv76CW5h9UUUDP43n0TSfEg2bV/85080Aty8NLSX\n9PhWdqRta2T7fnilciZehsujzJZ+nlitsdp7c6MYF6zVjVoG2YNsrNuyvmHCjs+8\nWYGl3evEXZoDPdQa7Idjm1WPRdtHMFAW+6vyc8kXmf+NM5n9cihDpclX9FQVutoy\nl4mwsYOIKGvlfslgyF7nQ48XuD34LwUHhNBvg67PYQKBgQDwaFZKB/DvSdOAwROs\n+hoIgW3B6COZcSyslR5X8fbsHF7yAD/qcY2d+fynYLWAvCD4ZMiNdU2qQllUnya2\neKPETobMn5NtPHdxnq+d6NOlo/fiVG7M8kf1GCUpcbB6OTE4ZsW2NxSwGLw3W5Fm\nN986qT1MEBloVQ1XnOCsWRjKCQKBgQDPhzkV368wYxamfTq+zBtG28rL0S51Pn83\nTkm+FcGwhQgLrEDdF/18Q2MVT1R+tCq2e35nYdvN4JY+2Kd9tKVrvb2wPtXxN6MV\n8XfPxEOo3XRzCiJ0fUI8KKPSCm49OVipIOuHZKApYVA0C0jxAhZyu4OPYeq460og\n+RycnvPibQKBgQDAloUR11y/BQBnc8UkXFMAn1bi8Omb4ZstQmRFhbQOoAe7jFGn\nqYIOnRY2q/WbBJrRAkPbdq5aB77yWHC12t0uxM2eHPQInVj+b2Y2dS8f0cQhzwvY\nKPtWMBqNIeODdk+k5Efc2jE7hQU6v6MyJO4yWyOczITeHMyMdENULif6qQKBgGeH\nN+03l7f11rjbxFCmlfz1bOfcxOZsdR5sCdGwHN4on2jjV8B0VVqGa4mX97j1vFEo\nrlh4sySzo4BaqMPHOLbVAypHTod1kABEY9bcPDyjrZIuPh4K1t4YEBGaboBQeXB2\nIcl7Y4MBLvenoY3J0tUNwoXm/SefCW4FmEZx7YzJAoGBAIy22HvLU/9KWWdilill\nE5f2iBXg3dKBzf6I+mlc6DJSmGhw0h4eEDT3RpeSX9rhjXdno9PIIYyaPJYX5yA3\nhiAwKeN3wi6eBqlNosMhC/LJGmTB01R+YPVaMEnvCZlqVzo689F1+QmSWPPXsu89\n0H90xMLjG9ktXmPxvNBTRlMG\n-----END PRIVATE KEY-----\n",
+  "client_email": "agf191292-gmail-com@erp-electrico.iam.gserviceaccount.com",
+  "client_id": "113075427154258084657",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/agf191292-gmail-com%40erp-electrico.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}
