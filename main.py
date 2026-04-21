@@ -2,134 +2,115 @@ import streamlit as st
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import pandas as pd
-import os, sys, time
+import time
 
-# --- CONFIGURACION VISUAL ---
-st.set_page_config(page_title="SISTEMA ERP", page_icon="⚡", layout="wide")
+# --- CONFIGURACIÓN DE LA PÁGINA ---
+st.set_page_config(page_title="ERP MAXTIVA", layout="wide", page_icon="⚡")
 
-st.markdown("""
-    <style>
-    .main { background-color: #f4f7f9; }
-    [data-testid="stMetricValue"] { font-size: 26px; color: #004a99; font-weight: bold; }
-    div.stButton > button:first-child {
-        background-color: #004a99; color: white; border-radius: 8px; height: 3em; width: 100%;
-        font-weight: bold; border: none;
-    }
-    </style>
-    """, unsafe_allow_html=True)
+# --- VARIABLES DE CONEXIÓN ---
+# Sustituye esta URL por la de tu Google Sheet real
+URL = "https://docs.google.com/spreadsheets/d/TU_ID_DE_HOJA_AQUI/edit"
 
-def resource_path(r):
-    try:
-        base_path = sys._MEIPASS
-    except Exception:
-        base_path = os.path.abspath(".")
-    return os.path.join(base_path, r)
-
-URL = "https://docs.google.com/spreadsheets/d/1dJWM1dBQ5DfWQBIRKHja_YoMH_JeNXVu0ruOzlHQ3BM/edit"
-
-@st.cache_resource
 def conectar():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     
-    # Extraemos los datos de Secrets
-    creds_dict = dict(st.secrets["gcp_service_account"])
-    
-    # --- LIMPIEZA PROFUNDA DE LA LLAVE ---
-    # Esto elimina cualquier rastro de \n de texto y lo vuelve a montar limpio
-    raw_key = creds_dict["private_key"]
-    clean_key = raw_key.replace("\\n", "\n")
-    
-    # Si por error se pegó todo en una línea sin saltos, esto no funcionaría,
-    # así que forzamos la estructura que Google espera:
-    if "-----BEGIN PRIVATE KEY-----" in clean_key:
-        inner_key = clean_key.replace("-----BEGIN PRIVATE KEY-----", "").replace("-----END PRIVATE KEY-----", "").strip()
-        # Quitamos espacios y saltos que pudieran haber quedado dentro
-        inner_key = "".join(inner_key.split())
-        # Montamos la llave perfecta
-        final_key = f"-----BEGIN PRIVATE KEY-----\n{inner_key}\n-----END PRIVATE KEY-----\n"
-        creds_dict["private_key"] = final_key
+    try:
+        # Extraemos los datos de Secrets (Streamlit Cloud)
+        creds_dict = dict(st.secrets["gcp_service_account"])
+        
+        # Limpieza de la clave privada (Arregla errores de formato y padding)
+        pk = creds_dict["private_key"]
+        if "\\n" in pk:
+            pk = pk.replace("\\n", "\n")
+        
+        if "-----BEGIN PRIVATE KEY-----" in pk:
+            cuerpo = pk.replace("-----BEGIN PRIVATE KEY-----", "").replace("-----END PRIVATE KEY-----", "").strip()
+            cuerpo = "".join(cuerpo.split())
+            pk_final = f"-----BEGIN PRIVATE KEY-----\n{cuerpo}\n-----END PRIVATE KEY-----\n"
+            creds_dict["private_key"] = pk_final
 
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-    return gspread.authorize(creds).open_by_url(URL)
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        return gspread.authorize(creds).open_by_url(URL)
+    except Exception as e:
+        st.error(f"Error de conexión: {e}")
+        return None
 
+# --- LÓGICA DE LOGIN ---
 if 'autenticado' not in st.session_state:
-    st.session_state.update({'autenticado': False, 'rol': None, 'user': None})
+    st.session_state.autenticado = False
 
-# --- LOGICA DE ACCESO ---
-if not st.session_state['autenticado']:
-    st.markdown("<h1 style='text-align: center;'>🔐 ACCESO ERP</h1>", unsafe_allow_html=True)
-    _, col2, _ = st.columns([1, 1, 1])
-    with col2:
-        with st.form("Login"):
-            u = st.text_input("Usuario")
-            p = st.text_input("Contrasena", type="password")
-            if st.form_submit_button("ENTRAR"):
+def login():
+    st.title("⚡ ERP MAXTIVA")
+    with st.form("Login"):
+        usuario = st.text_input("Usuario")
+        clave = st.text_input("Contraseña", type="password")
+        boton = st.form_submit_button("Entrar")
+        
+        if boton:
+            gc = conectar()
+            if gc:
                 try:
-                    sh = conectar()
-                    users = pd.DataFrame(sh.worksheet("Usuarios").get_all_records())
-                    match = users[(users['Usuario'] == u) & (users['Password'].astype(str) == p)]
-                    if not match.empty:
-                        st.session_state.update({'autenticado': True, 'rol': match.iloc[0]['Rol'], 'user': u})
+                    # Buscamos en la pestaña 'Usuarios'
+                    ws_user = gc.worksheet("Usuarios")
+                    usuarios_df = pd.DataFrame(ws_user.get_all_records())
+                    
+                    user_data = usuarios_df[(usuarios_df['usuario'] == usuario) & (usuarios_df['clave'].astype(str) == clave)]
+                    
+                    if not user_data.empty:
+                        st.session_state.autenticado = True
+                        st.session_state.usuario = usuario
+                        st.session_state.rol = user_data.iloc[0]['rol']
+                        st.success("¡Bienvenido!")
                         st.rerun()
                     else:
-                        st.error("Credenciales incorrectas")
+                        st.error("Usuario o contraseña incorrectos")
                 except Exception as e:
-                    st.error(f"Error de conexion: {e}")
+                    st.error(f"Error al leer usuarios: {e}")
+
+# --- PANEL PRINCIPAL ---
+if not st.session_state.autenticado:
+    login()
 else:
-    # --- INTERFAZ PRINCIPAL (Alineacion protegida) ---
-    try:
-        sh = conectar()
-        rol = st.session_state['rol']
-        todas_las_hojas = [h.title for h in sh.worksheets() if h.title != "Usuarios"]
-        
-        with st.sidebar:
-            st.markdown("<h3 style='text-align: center;'>EMPRESAS</h3>", unsafe_allow_html=True)
-            c_l = st.columns(3)
-            for i, l in enumerate(["logo_maxtiva.png", "logo_ceta.png", "logo_ipalux.png"]):
-                if os.path.exists(resource_path(l)):
-                    c_l[i].image(resource_path(l))
-            
-            st.divider()
-            st.write(f"👤 **{st.session_state['user']}** | {rol}")
-            st.divider()
+    st.sidebar.title(f"Hola, {st.session_state.usuario}")
+    rol = st.session_state.rol
+    menu = st.sidebar.radio("Menú", ["Empresas", "Gastos", "Inventario"])
+    
+    if st.sidebar.button("Cerrar Sesión"):
+        st.session_state.autenticado = False
+        st.rerun()
+
+    # CONEXIÓN A LOS DATOS
+    gc = conectar()
+    if gc:
+        try:
+            # IMPORTANTE: Asegúrate de que los nombres coincidan con tus pestañas de Google Sheets
+            nombre_pestaña = "Obras" if menu == "Empresas" else menu
+            ws = gc.worksheet(nombre_pestaña)
+            datos = ws.get_all_records()
+            df = pd.DataFrame(datos)
+
+            st.header(f"Gestión de {menu}")
 
             if rol == "Admin":
-                menu = st.radio("MODULOS MAESTROS", ["📊 DASHBOARD"] + todas_las_hojas)
+                # Editor interactivo para el Administrador
+                st.info("Modifica los datos directamente en la tabla y pulsa Guardar.")
+                df_editado = st.data_editor(df, num_rows="dynamic", use_container_width=True, key=f"editor_{menu}")
+                
+                if st.button("💾 GUARDAR CAMBIOS"):
+                    with st.spinner("Guardando..."):
+                        # Reemplazar todo el contenido de la hoja
+                        ws.clear()
+                        # Preparar datos incluyendo encabezados
+                        lista_final = [df_editado.columns.values.tolist()] + df_editado.values.tolist()
+                        ws.update('A1', lista_final)
+                        st.success("¡Datos actualizados en la nube!")
+                        time.sleep(1)
+                        st.rerun()
             else:
-                permitidos = ["Reportes", "Agenda", "Incidencias"]
-                opciones = [h for h in todas_las_hojas if h in permitidos]
-                menu = st.radio("MENU EMPLEADO", ["📊 DASHBOARD"] + opciones)
-            
-            st.divider()
-            if st.button("Cerrar Sesion"):
-                st.session_state.update({'autenticado': False, 'rol': None, 'user': None})
-                st.rerun()
-
-        # --- CONTENIDO ---
-        if menu == "📊 DASHBOARD":
-            st.title(f"🚀 Panel de Control - {st.session_state['user']}")
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Empresas", "3 Activas")
-            c2.metric("Modulos", len(todas_las_hojas))
-            c3.metric("Nube", "Sincronizada")
-            st.success(f"Sesion activa como {rol}. Seleccione un modulo en el menu lateral.")
-        else:
-            st.title(f"📂 Modulo: {menu}")
-            ws = sh.worksheet(menu)
-            data = ws.get_all_values()
-            df = pd.DataFrame(data[1:], columns=data[0]) if len(data) > 1 else pd.DataFrame(columns=data[0] if data else [])
-
-            if rol == "Admin":
-                ed = st.data_editor(df, num_rows="dynamic", use_container_width=True)
-                if st.button(f"💾 GUARDAR CAMBIOS EN {menu.upper()}"):
-                    ws.clear()
-                    ws.update([ed.columns.tolist()] + ed.values.tolist())
-                    st.balloons()
-                    st.toast("Datos guardados")
-                    time.sleep(1)
-                    st.rerun()
-            else:
+                # Vista de solo lectura para Empleados
                 st.dataframe(df, use_container_width=True)
+                st.warning("No tienes permisos para editar esta sección.")
 
-    except Exception as e:
-        st.error(f"Error en el modulo {menu}: {e}")
+        except Exception as e:
+            st.error(f"Error al cargar la pestaña {menu}: {e}")
+            st.info("Verifica que el nombre de la pestaña en Google Sheets sea exactamente igual al del menú.")
