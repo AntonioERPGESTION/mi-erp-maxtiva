@@ -30,10 +30,9 @@ def conectar():
             creds_dict["private_key"] = pk_final
 
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-        return gspread.authorize(creds).open_by_url(URL)
-    except Exception as e:
-        st.error(f"Error de conexión: {e}")
-        return None
+       # El ID es lo que hay entre /d/ y /edit en tu URL
+ID_HOJA = "1tu_codigo_largo_aqui_dejalo_solo" 
+return gspread.authorize(creds).open(ID_HOJA)
 
 # --- LÓGICA DE LOGIN ---
 if 'autenticado' not in st.session_state:
