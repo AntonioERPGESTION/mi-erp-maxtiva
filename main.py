@@ -31,7 +31,7 @@ def conectar():
 
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
        # El ID es lo que hay entre /d/ y /edit en tu URL
-ID_HOJA = "1tu_codigo_largo_aqui_dejalo_solo" 
+ID_HOJA = https://docs.google.com/spreadsheets/d/1dJWM1dBQ5DfWQBIRKHja_YoMH_JeNXVu0ruOzlHQ3BM/edit?gid=2078741773#gid=2078741773 
 return gspread.authorize(creds).open(ID_HOJA)
 
 # --- LÓGICA DE LOGIN ---
