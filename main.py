@@ -27,7 +27,8 @@ def conectar():
             creds_dict["private_key"] = pk_final
 
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-        return gspread.authorize(creds).open_by_url(URL)
+        client = gspread.authorize(creds)
+        return client.open_by_url(URL)
     except Exception as e:
         st.error(f"Error de conexión: {e}")
         return None
@@ -44,20 +45,19 @@ def login():
         boton = st.form_submit_button("Entrar")
         
         if boton:
-            gc = conectar()
-            if gc:
+            sh = conectar()
+            if sh:
                 try:
-                    # Buscamos la pestaña de usuarios ignorando mayúsculas en el nombre de la hoja
-                    lista_hojas = [h.title for h in gc.open_by_url(URL).worksheets()]
+                    # Obtenemos la lista de nombres de pestañas directamente del objeto 'sh'
+                    lista_hojas = [h.title for h in sh.worksheets()]
                     hoja_user_real = next((h for h in lista_hojas if h.upper() == "USUARIOS"), "USUARIOS")
                     
-                    ws_user = gc.worksheet(hoja_user_real)
+                    ws_user = sh.worksheet(hoja_user_real)
                     usuarios_df = pd.DataFrame(ws_user.get_all_records())
                     
-                    # NORMALIZAR COLUMNAS: Pasamos todos los encabezados a MAYÚSCULAS y quitamos espacios
+                    # Normalizamos columnas a mayúsculas
                     usuarios_df.columns = [str(c).upper().strip() for c in usuarios_df.columns]
                     
-                    # Verificamos si existen las columnas necesarias tras normalizar
                     if 'USUARIO' in usuarios_df.columns and 'CONTRASEÑA' in usuarios_df.columns:
                         user_match = usuarios_df[
                             (usuarios_df['USUARIO'].astype(str).str.strip() == usuario_input) & 
@@ -67,7 +67,7 @@ def login():
                         if not user_match.empty:
                             st.session_state.autenticado = True
                             st.session_state.usuario = usuario_input
-                            # Buscamos la columna ROL de la misma forma
+                            # Buscamos la columna ROL
                             col_rol = 'ROL' if 'ROL' in usuarios_df.columns else usuarios_df.columns[2]
                             st.session_state.rol = user_match.iloc[0][col_rol]
                             st.success("¡Acceso concedido!")
@@ -76,8 +76,7 @@ def login():
                         else:
                             st.error("Usuario o contraseña incorrectos")
                     else:
-                        st.error(f"No se encontraron las columnas 'USUARIO' y 'CONTRASEÑA'. Detectadas: {list(usuarios_df.columns)}")
-                        
+                        st.error(f"Faltan columnas. Detectadas: {list(usuarios_df.columns)}")
                 except Exception as e:
                     st.error(f"Error en el sistema de usuarios: {e}")
 
@@ -94,13 +93,10 @@ else:
         st.session_state.autenticado = False
         st.rerun()
 
-    # MAPEO DE PESTAÑAS (Ignorando mayúsculas)
-    gc = conectar()
-    if gc:
+    sh = conectar()
+    if sh:
         try:
-            lista_hojas = [h.title for h in gc.open_by_url(URL).worksheets()]
-            
-            # Buscamos la hoja que mejor coincida con la opción del menú
+            lista_hojas = [h.title for h in sh.worksheets()]
             mapa_nombres = {
                 "Empresas": "CLIENTES",
                 "Gastos": "GASTOS",
@@ -108,11 +104,9 @@ else:
                 "Inventario": "INVENTARIO"
             }
             objetivo = mapa_nombres[opcion]
-            
-            # Buscamos la hoja real en el Excel que coincida con nuestro 'objetivo'
             hoja_real = next((h for h in lista_hojas if h.upper().strip() == objetivo), objetivo)
             
-            ws = gc.worksheet(hoja_real)
+            ws = sh.worksheet(hoja_real)
             datos = ws.get_all_records()
             df = pd.DataFrame(datos)
 
@@ -127,12 +121,12 @@ else:
                         ws.clear()
                         datos_a_subir = [df_editado.columns.tolist()] + df_editado.values.tolist()
                         ws.update('A1', datos_a_subir)
-                        st.success("¡Sincronizado con Google Sheets!")
+                        st.success("¡Sincronizado!")
                         time.sleep(1)
                         st.rerun()
             else:
                 st.dataframe(df, use_container_width=True)
-                st.warning("Solo lectura (Permisos de empleado)")
+                st.warning("Solo lectura (Empleado)")
 
         except Exception as e:
             st.error(f"Error al cargar '{opcion}': {e}")
