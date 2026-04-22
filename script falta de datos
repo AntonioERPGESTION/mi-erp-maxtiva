@@ -1,0 +1,77 @@
+import streamlit as st
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+
+# --- CONFIGURACIÓN DE CONEXIÓN ---
+SPREADSHEET_ID = "1dJWM1dBQ5DfWQBIRKHja_YoMH_JeNXVu0ruOzlHQ3BM"
+
+def conectar():
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    creds_dict = dict(st.secrets["gcp_service_account"])
+    pk = creds_dict["private_key"].replace("\\n", "\n")
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    return gspread.authorize(creds).open_by_key(SPREADSHEET_ID)
+
+def configurar_base_de_datos():
+    sh = conectar()
+    st.info("Iniciando auditoría de estructura en Google Sheets...")
+
+    # DEFINICIÓN DE ESTRUCTURA IDEAL
+    # Nombre de hoja: Lista de columnas necesarias
+    estructura = {
+        "USUARIOS": ["USUARIO", "CONTRASEÑA", "ROL"],
+        "Obras": ["NOMBRE", "PRESUPUESTO", "UBICACIÓN", "ESTADO"],
+        "Gastos_Detalle": ["FECHA", "OBRA", "TRABAJADOR", "CONCEPTO", "IMPORTE"],
+        "Empleados": ["NOMBRE", "DNI", "CARGO", "TELÉFONO"],
+        "Inventario": ["ARTÍCULO", "CANTIDAD", "ESTADO", "OBRA_ASIGNADA"],
+        "Incidencias": ["FECHA", "OBRA", "DESCRIPCIÓN", "ESTADO"],
+        "Planificacion": ["FECHA_INICIO", "FECHA_FIN", "OBRA", "TRABAJADOR_ASIGNADO"],
+        "Pedidos": ["FECHA", "PROVEEDOR", "MATERIAL", "ESTADO_PAGO"],
+        "Agenda": ["FECHA", "EVENTO", "DETALLES"]
+    }
+
+    hojas_actuales = {h.title: h for h in sh.worksheets()}
+
+    for nombre_hoja, columnas in estructura.items():
+        # 1. Verificar si la hoja existe, si no, crearla
+        if nombre_hoja not in hojas_actuales:
+            ws = sh.add_worksheet(title=nombre_hoja, rows="100", cols="20")
+            ws.append_row(columnas)
+            st.success(f"✅ Hoja '{nombre_hoja}' creada con sus columnas.")
+        else:
+            # 2. Si existe, verificar si faltan columnas
+            ws = hojas_actuales[nombre_hoja]
+            primera_fila = ws.row_values(1)
+            columnas_existentes = [c.upper().strip() for c in primera_fila]
+            
+            columnas_faltantes = [c for c in columnas if c not in columnas_existentes]
+            
+            if columnas_faltantes:
+                # Añadir columnas faltantes al final de la fila 1
+                nueva_fila_cabecera = primera_fila + columnas_faltantes
+                ws.update('A1', [nueva_fila_cabecera])
+                st.warning(f"⚠️ Actualizada hoja '{nombre_hoja}': Se añadieron {columnas_faltantes}")
+            else:
+                st.write(f"✔️ Hoja '{nombre_hoja}' correcta.")
+
+    st.balloons()
+    st.success("Estructura de Base de Datos sincronizada correctamente.")
+
+# --- INTERFAZ DEL SCRIPT ---
+st.title("🛠️ Configurador de Estructura ERP")
+st.write("Este script asegura que tu Google Sheet tenga todas las pestañas y columnas que el código del ERP necesita para funcionar sin errores.")
+
+if st.button("Ejecutar Sincronización de Estructura"):
+    try:
+        configurar_base_de_datos()
+    except Exception as e:
+        st.error(f"Error durante la configuración: {e}")
+
+st.divider()
+st.info("""
+**¿Qué hace este script?**
+1. Revisa si tienes las pestañas: Obras, Gastos_Detalle, Empleados, etc.
+2. Si no existen, las crea.
+3. Si existen pero les falta una columna (como 'IMPORTE' o 'TRABAJADOR'), la añade al final.
+4. No borra datos existentes, solo añade lo que falta.
+""")
