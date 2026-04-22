@@ -5,231 +5,168 @@ import pandas as pd
 import plotly.express as px
 import time
 from datetime import datetime
-import os # Para verificar que existen las imágenes locales
+import os
 
-# --- CONFIGURACIÓN DE PÁGINA ---
+# --- CONFIGURACIÓN ---
 st.set_page_config(page_title="ERP GRUPO MAXTIVA", layout="wide", page_icon="⚡")
 
-# ID de tu Google Sheet (verificado por tus capturas)
 SPREADSHEET_ID = "1dJWM1dBQ5DfWQBIRKHja_YoMH_JeNXVu0ruOzlHQ3BM"
 
-# --- DEFINICIÓN DE LOGOS LOCALES ---
-# Asegúrate de que estos archivos estén en la raíz de tu repositorio en GitHub
-LOGOS = {
-    "MAXTIVA_INDUSTRIAL": "image_2.png",
-    "CETA_INSTALACIONES": "image_3.png",
-    "IPALUX": "image_4.png"
-}
+# Identificación de logos locales según tus archivos subidos
+LOGOS = ["logo_maxtiva.png", "logo_ceta.png", "logo_ipalux.png"]
 
 def conectar():
-    """Conexión robusta con Google Sheets (Secrets)"""
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     try:
         creds_dict = dict(st.secrets["gcp_service_account"])
-        # Limpieza de clave para Streamlit Cloud
         pk = creds_dict["private_key"].replace("\\n", "\n")
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
         return client.open_by_key(SPREADSHEET_ID)
     except Exception as e:
-        st.error(f"Error crítico de conexión: {e}")
+        st.error(f"Error de conexión: {e}")
         return None
 
-# --- FUNCION VISUAL: CUADRÍCULA DE LOGOS ---
-def mostrar_logos_grupo(anchura=150):
-    """Muestra los logos de las empresas del grupo en una cuadrícula"""
-    st.write("### Empresas del Grupo")
-    col_logos = st.columns(len(LOGOS))
-    for i, (nombre, archivo) in enumerate(LOGOS.items()):
-        with col_logos[i]:
-            if os.path.exists(archivo):
-                st.image(archivo, width=anchura)
-            else:
-                # Si no encuentra el archivo local, muestra el texto
-                st.info(f"Logo {nombre} no encontrado en la raíz.")
+def asegurar_columnas(df, columnas_requeridas):
+    """Crea columnas vacías si no existen para evitar que el código falle"""
+    for col in columnas_requeridas:
+        if col not in df.columns:
+            df[col] = 0 if col in ['Importe', 'Presupuesto', 'Gasto_Real'] else ""
+    return df
 
-# --- LÓGICA DE SESIÓN ---
+# --- SESIÓN ---
 if 'autenticado' not in st.session_state:
     st.session_state.autenticado = False
 
 # --- PANTALLA DE LOGIN ---
 def login():
-    # Cabecera de Login con Logos
-    c1, c2, c3 = st.columns([1,2,1])
-    with c2:
-        mostrar_logos_grupo(anchura=200)
-        st.title("⚡ Acceso al ERP")
-    
-    with st.form("Login"):
-        # Usando columnas exactas de tu foto: Usuario, CONTRASEÑA, Rol
-        u_in = st.text_input("Usuario").strip()
-        p_in = st.text_input("Contraseña", type="password").strip()
+    cols = st.columns([1, 2, 1])
+    with cols[1]:
+        # Mostrar los 3 logos en el login
+        l_cols = st.columns(3)
+        for i, logo in enumerate(LOGOS):
+            if os.path.exists(logo): l_cols[i].image(logo, use_container_width=True)
         
-        if st.form_submit_button("Entrar"):
-            sh = conectar()
-            if sh:
-                try:
-                    # Búsqueda flexible de la pestaña de usuarios
-                    hojas = [h.title for h in sh.worksheets()]
-                    h_user_real = next((h for h in hojas if "USUARIO" in h.upper().strip()), "USUARIOS")
+        st.title("⚡ Acceso ERP Grupo Maxtiva")
+        with st.form("Login"):
+            u = st.text_input("Usuario").strip()
+            p = st.text_input("Contraseña", type="password").strip()
+            if st.form_submit_button("Entrar"):
+                sh = conectar()
+                if sh:
+                    ws = sh.worksheet("USUARIOS")
+                    df = pd.DataFrame(ws.get_all_records())
+                    # Normalizar nombres de columnas a mayúsculas
+                    df.columns = [str(c).upper().strip() for c in df.columns]
                     
-                    ws_user = sh.worksheet(h_user_name if 'h_user_name' in locals() else h_user_real)
-                    df_u = pd.DataFrame(ws_user.get_all_records())
+                    # Verificar si existe Usuario y CONTRASEÑA (con Ñ)
+                    col_u = 'USUARIO'
+                    col_p = 'CONTRASEÑA' if 'CONTRASEÑA' in df.columns else 'PASSWORD'
                     
-                    # Normalizamos columnas de tu foto (Usuario, CONTRASEÑA, Rol)
-                    df_u.columns = [str(c).upper().strip() for c in df_u.columns]
-                    
-                    match = df_u[
-                        (df_u['USUARIO'].astype(str).str.strip() == u_in) & 
-                        (df_u['CONTRASEÑA'].astype(str).str.strip() == p_in)
-                    ]
-                    
+                    match = df[(df[col_u].astype(str) == u) & (df[col_p].astype(str) == p)]
                     if not match.empty:
                         st.session_state.autenticado = True
-                        st.session_state.usuario = u_in
-                        # Según tu foto, los roles son "Admin" o "Empleado"
-                        st.session_state.rol = str(match.iloc[0]['ROL']).upper().strip()
-                        st.success("Acceso correcto")
-                        time.sleep(0.5)
+                        st.session_state.usuario = u
+                        st.session_state.rol = str(match.iloc[0].get('ROL', 'EMPLEADO')).upper()
                         st.rerun()
                     else:
                         st.error("Usuario o contraseña incorrectos")
-                except Exception as e:
-                    st.error(f"Error en login: {e}")
 
-# --- APP PRINCIPAL ---
 if not st.session_state.autenticado:
     login()
 else:
-    # --- INTERFAZ PRINCIPAL CON LOGOS EN SIDEBAR ---
+    # --- INTERFAZ PRINCIPAL ---
     with st.sidebar:
-        mostrar_logos_grupo(anchura=100) # Logos pequeños en el menú
-        st.write("---")
+        # Logos en miniatura en el sidebar
+        for logo in LOGOS:
+            if os.path.exists(logo): st.image(logo, width=120)
+        
         st.write(f"👤 **{st.session_state.usuario}**")
-        st.write(f"Rol: `{st.session_state.rol}`")
-        st.write("---")
-        
-        # Mapeo de TODAS las pestañas que hemos visto en tus fotos
-        menu_map = {
-            "📊 Dashboard": "Obras", # Usaremos Obras para el Dashboard
-            "📁 Gestión de Datos": "Gastos_Detalle", # Sección genérica de edición
-            "👤 Informe Trabajador": "Empleados", # Generador de informes
-            "⚙️ Usuarios": "USUARIOS"
-        }
-        
-        seleccion = st.radio("Módulos", list(menu_map.keys()))
-        
+        menu = st.radio("Módulos", ["📊 Dashboard", "📁 Gestión de Datos", "👤 Informes Trabajador", "⚙️ Usuarios"])
         if st.button("Cerrar Sesión"):
             st.session_state.autenticado = False
             st.rerun()
 
     sh = conectar()
-    if not sh:
-        st.error("Error de conexión.")
-        st.stop()
-
-    # --- MÓDULO 1: DASHBOARD (Resúmenes y Gráficos) ---
-    if seleccion == "📊 Dashboard":
-        st.header("Dashboard General del Grupo")
-        
-        # Integración de Logos en el Dashboard
-        mostrar_logos_grupo(anchura=180)
-        
+    
+    # --- MÓDULO DASHBOARD ---
+    if menu == "📊 Dashboard":
+        st.header("Dashboard de Control")
         try:
-            # Ejemplo: Gráfico de Obras (Asegúrate de tener columnas: Nombre, Presupuesto, Gasto_Real)
+            # Vinculación de datos: Obras y Gastos
             df_obras = pd.DataFrame(sh.worksheet("Obras").get_all_records())
+            df_gastos = pd.DataFrame(sh.worksheet("Gastos_Detalle").get_all_records())
             
-            if not df_obras.empty and 'PRESUPUESTO' in df_obras.columns.str.upper():
-                st.subheader("Estado Financiero de Obras")
-                df_obras.columns = [c.upper() for c in df_obras.columns]
-                
-                fig = px.bar(df_obras, x='NOMBRE', y=['PRESUPUESTO', 'GASTO_REAL'], 
-                             title="Presupuesto vs Gasto Real por Obra", barmode='group')
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.info("Añade columnas 'Presupuesto' y 'Gasto_Real' a la pestaña 'Obras' para ver gráficos.")
-        except Exception as e:
-            st.warning(f"Error en Dashboard: {e}")
+            # Asegurar columnas críticas para que no dé error
+            df_obras = asegurar_columnas(df_obras, ['Nombre', 'Presupuesto', 'Gasto_Real'])
+            df_gastos = asegurar_columnas(df_gastos, ['Obra', 'Importe', 'Concepto'])
 
-    # --- MÓDULO 2: GESTIÓN DE DATOS (Editor Flexible) ---
-    elif seleccion == "📁 Gestión de Datos":
-        st.header("Gestión de Bases de Datos")
-        # Lista de todas tus pestañas originales de las fotos
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Gasto Total", f"{df_gastos['Importe'].sum():,.2f} €")
+            c2.metric("Obras en Curso", len(df_obras))
+            c3.metric("Registros Gastos", len(df_gastos))
+
+            col_a, col_b = st.columns(2)
+            with col_a:
+                fig1 = px.bar(df_obras, x='Nombre', y=['Presupuesto', 'Gasto_Real'], barmode='group', title="Presupuesto vs Real")
+                st.plotly_chart(fig1, use_container_width=True)
+            with col_b:
+                fig2 = px.pie(df_gastos, values='Importe', names='Obra', title="Distribución de Gastos")
+                st.plotly_chart(fig2, use_container_width=True)
+        except Exception as e:
+            st.info("Configura las pestañas 'Obras' y 'Gastos_Detalle' para activar estadísticas.")
+
+    # --- MÓDULO GESTIÓN DE DATOS ---
+    elif menu == "📁 Gestión de Datos":
         tablas = ["Obras", "Inventario", "Reportes", "Empleados", "Gastos_Detalle", "Pedidos", "Planificacion", "Incidencias", "Agenda"]
-        tabla_sel = st.selectbox("Selecciona la tabla a editar", tablas)
+        sel = st.selectbox("Seleccionar Tabla", tablas)
         
-        try:
-            ws = sh.worksheet(tabla_sel)
-            # Obtenemos valores crudos para el editor para evitar fallos por celdas vacías
-            datos_raw = ws.get_all_values()
-            
-            if len(datos_raw) > 0:
-                df = pd.DataFrame(datos_raw[1:], columns=datos_raw[0])
-            else:
-                df = pd.DataFrame()
-
-            st.subheader(f"Edición en vivo: {tabla_sel}")
-
-            # Permisos: Solo ADMIN (como tú en la foto) edita
-            if "ADMIN" in st.session_state.rol:
-                st.info("💡 Eres Administrador. Puedes editar y guardar cambios.")
-                df_editado = st.data_editor(df, num_rows="dynamic", use_container_width=True, key=f"ed_{tabla_sel}")
-                
-                if st.button("💾 GUARDAR CAMBIOS EN LA NUBE"):
-                    with st.spinner("Sincronizando..."):
-                        ws.clear()
-                        # Preparamos lista: encabezados + datos (rellenando celdas vacías para que no falle)
-                        final_data = [df_editado.columns.tolist()] + df_editado.fillna("").values.tolist()
-                        ws.update('A1', final_data)
-                        st.success("¡Datos guardados!")
-                        time.sleep(1)
-                        st.rerun()
-            else:
-                st.warning("Vista de Solo Lectura.")
-                st.dataframe(df, use_container_width=True)
-        except Exception as e:
-            st.error(f"Error cargando pestaña: {e}")
-
-    # --- MÓDULO 3: INFORMES POR TRABAJADOR ---
-    elif seleccion == "👤 Informe Trabajador":
-        st.header("Generador de Informes Personales")
+        ws = sh.worksheet(sel)
+        raw = ws.get_all_values()
+        df = pd.DataFrame(raw[1:], columns=raw[0]) if len(raw) > 1 else pd.DataFrame(columns=raw[0] if raw else [])
         
+        if st.session_state.rol == "ADMIN":
+            df_ed = st.data_editor(df, num_rows="dynamic", use_container_width=True)
+            if st.button("💾 Guardar Cambios"):
+                ws.clear()
+                ws.update('A1', [df_ed.columns.tolist()] + df_ed.fillna("").values.tolist())
+                st.success("Guardado en Google Sheets")
+        else:
+            st.dataframe(df, use_container_width=True)
+
+    # --- MÓDULO INFORMES TRABAJADOR ---
+    elif menu == "👤 Informes Trabajador":
+        st.header("Generador de Informes")
         try:
             df_emp = pd.DataFrame(sh.worksheet("Empleados").get_all_records())
-            trabajador = st.selectbox("Selecciona un trabajador", df_emp["Nombre"].unique())
+            df_gastos = pd.DataFrame(sh.worksheet("Gastos_Detalle").get_all_records())
             
-            if trabajador:
-                # Ejemplo: Buscamos gastos de ese trabajador (Asegúrate de tener columna 'Trabajador' en Gastos_Detalle)
-                df_gastos_all = pd.DataFrame(sh.worksheet("Gastos_Detalle").get_all_records())
-                informe = df_gastos_all[df_gastos_all["Trabajador"] == trabajador]
+            # Asegurar vinculación por nombre
+            if 'Nombre' in df_emp.columns and 'Trabajador' in df_gastos.columns:
+                emp = st.selectbox("Seleccionar Empleado", df_emp['Nombre'].unique())
+                info = df_gastos[df_gastos['Trabajador'] == emp]
                 
-                st.subheader(f"Informe Detallado: {trabajador}")
-                st.write(f"Total Gastos Registrados: {informe['Importe'].sum():,.2f} €")
-                st.dataframe(informe, use_container_width=True)
+                st.subheader(f"Actividad de {emp}")
+                st.metric("Total Gastado/Horas", f"{info['Importe'].sum() if 'Importe' in info.columns else 0} €")
+                st.dataframe(info, use_container_width=True)
                 
-                # Botón de Descarga (CSV formateado)
-                csv = informe.to_csv(index=False).encode('utf-8')
-                st.download_button(
-                    label="📥 Descargar Informe (CSV)",
-                    data=csv,
-                    file_name=f"Informe_{trabajador}_{datetime.now().strftime('%Y%m%d')}.csv",
-                    mime="text/csv",
-                )
-        except Exception as e:
-            st.error(f"Error al generar informe: {e}. Revisa las columnas de tus pestañas.")
+                csv = info.to_csv(index=False).encode('utf-8')
+                st.download_button("📥 Descargar Informe CSV", csv, f"Informe_{emp}.csv", "text/csv")
+            else:
+                st.error("Faltan columnas 'Nombre' en Empleados o 'Trabajador' en Gastos_Detalle.")
+        except:
+            st.error("Error al vincular las hojas de Empleados y Gastos.")
 
-    # --- MÓDULO 4: GESTIÓN DE USUARIOS ---
-    elif seleccion == "⚙️ Usuarios":
-        st.header("Administración de Usuarios")
-        if "ADMIN" in st.session_state.rol:
+    # --- MÓDULO USUARIOS ---
+    elif menu == "⚙️ Usuarios":
+        if st.session_state.rol == "ADMIN":
             ws = sh.worksheet("USUARIOS")
-            datos_raw = ws.get_all_values()
-            df = pd.DataFrame(datos_raw[1:], columns=datos_raw[0])
-            
-            df_editado = st.data_editor(df, num_rows="dynamic", use_container_width=True, key="ed_usuarios")
-            if st.button("💾 Guardar Usuarios"):
+            raw = ws.get_all_values()
+            df = pd.DataFrame(raw[1:], columns=raw[0])
+            df_ed = st.data_editor(df, num_rows="dynamic", use_container_width=True)
+            if st.button("💾 Actualizar Usuarios"):
                 ws.clear()
-                ws.update('A1', [df_editado.columns.tolist()] + df_editado.values.tolist())
-                st.success("Lista de usuarios actualizada.")
+                ws.update('A1', [df_ed.columns.tolist()] + df_ed.values.tolist())
+                st.success("Usuarios actualizados")
         else:
-            st.error("No tienes permisos para ver esta sección.")
+            st.error("Acceso denegado")
