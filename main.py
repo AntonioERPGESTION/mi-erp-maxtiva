@@ -61,7 +61,7 @@ def to_num(val):
         return float(str(val).replace('€', '').replace(' ', '').replace(',', '.'))
     except: return 0.0
 
-# --- LÓGICA DE SESIÓN ---
+# --- SESIÓN ---
 if 'autenticado' not in st.session_state:
     st.session_state.autenticado = False
 
@@ -70,7 +70,7 @@ sh = conectar_bbdd()
 if not st.session_state.autenticado:
     c1, c2, c3 = st.columns([1, 2, 1])
     with c2:
-        st.title("ERP Maxtiva")
+        st.title("Acceso ERP Maxtiva")
         with st.form("Login"):
             u, p = st.text_input("Usuario"), st.text_input("Contraseña", type="password")
             if st.form_submit_button("Entrar"):
@@ -85,26 +85,56 @@ with st.sidebar:
     for l in LOGOS:
         if os.path.exists(l): st.image(l, width=100)
     seccion = st.selectbox("Módulos", ["📊 Dashboard"] + list(ESTRUCTURA_BBDD.keys()))
-    if st.button("Salir"):
+    if st.button("Cerrar Sesión"):
         st.session_state.autenticado = False
         st.rerun()
 
-# --- DASHBOARD ---
+# --- 📊 DASHBOARD MULTIDIMENSIONAL ---
 if seccion == "📊 Dashboard":
-    st.header("Control de Costes e Imputaciones")
+    st.header("Dashboard Inteligente de Obras")
     df_i, _ = asegurar_y_obtener_datos(sh, "Imputaciones")
     df_o, _ = asegurar_y_obtener_datos(sh, "Obras")
     
-    if not df_o.empty:
-        # Solo sumamos si es facturable
-        df_i['IMPORTE_NUM'] = df_i['HORAS_TOTALES'].apply(to_num) # Aquí podrías multiplicar por coste_hora
-        res = df_i[df_i['FACTURABLE'] == 'SÍ'].groupby('OBRA')['IMPORTE_NUM'].sum().reset_index()
-        st.info("El Dashboard muestra las horas acumuladas facturables por obra.")
-        st.plotly_chart(px.bar(res, x='OBRA', y='IMPORTE_NUM', title="Horas Facturables por Obra"))
+    if df_o.empty:
+        st.warning("No hay obras registradas.")
+    else:
+        # Procesamiento de datos para el Dashboard
+        df_o['PRESUPUESTO'] = df_o['PRESUPUESTO'].apply(to_num)
+        
+        # Limpieza de Imputaciones
+        for col in ['HORAS_TOTALES', 'DIETAS', 'GASOLINA', 'PEAJES', 'ORA', 'OTROS']:
+            df_i[col] = df_i[col].apply(to_num)
+        
+        # Cálculos derivados
+        df_i['SUMA_GASTOS'] = df_i[['DIETAS', 'GASOLINA', 'PEAJES', 'ORA', 'OTROS']].sum(axis=1)
+        
+        # Selector de Vista
+        vista = st.radio("Seleccionar métrica de análisis:", 
+                         ["Totales (Presupuesto vs Gastos)", "Solo Facturable", "Solo Gastos de Viaje", "Horas Imputadas"],
+                         horizontal=True)
+        
+        if vista == "Totales (Presupuesto vs Gastos)":
+            res = df_i.groupby('OBRA')['SUMA_GASTOS'].sum().reset_index().rename(columns={'OBRA':'NOMBRE', 'SUMA_GASTOS':'GASTO_TOTAL'})
+            df_plot = pd.merge(df_o, res, on='NOMBRE', how='left').fillna(0)
+            fig = px.bar(df_plot, x='NOMBRE', y=['PRESUPUESTO', 'GASTO_TOTAL'], barmode='group', title="Control Presupuestario")
+            st.plotly_chart(fig, use_container_width=True)
 
-# --- MÓDULO DE AGENDA (CONEXIÓN CON TRABAJADORES) ---
+        elif vista == "Solo Facturable":
+            res = df_i[df_i['FACTURABLE'] == 'SÍ'].groupby('OBRA')['HORAS_TOTALES'].sum().reset_index()
+            st.plotly_chart(px.bar(res, x='OBRA', y='HORAS_TOTALES', title="Horas Totales Facturables por Obra", color_discrete_sequence=['#2ECC71']))
+
+        elif vista == "Solo Gastos de Viaje":
+            res = df_i.groupby('OBRA')[['DIETAS', 'GASOLINA', 'PEAJES', 'ORA']].sum().reset_index()
+            fig = px.bar(res, x='OBRA', y=['DIETAS', 'GASOLINA', 'PEAJES', 'ORA'], title="Desglose de Gastos por Obra")
+            st.plotly_chart(fig, use_container_width=True)
+
+        elif vista == "Horas Imputadas":
+            res = df_i.groupby('OBRA')['HORAS_TOTALES'].sum().reset_index()
+            st.plotly_chart(px.bar(res, x='OBRA', y='HORAS_TOTALES', title="Volumen de Horas Totales por Obra", color_discrete_sequence=['#3498DB']))
+
+# --- 📅 AGENDA CONECTADA ---
 elif seccion == "Agenda":
-    st.header("📅 Agenda y Planificación")
+    st.header("Planificación y Agenda")
     df_a, ws_a = asegurar_y_obtener_datos(sh, "Agenda")
     df_o, _ = asegurar_y_obtener_datos(sh, "Obras")
     df_e, _ = asegurar_y_obtener_datos(sh, "Empleados")
@@ -112,21 +142,18 @@ elif seccion == "Agenda":
     lista_e = df_e['NOMBRE'].unique().tolist() if not df_e.empty else ["SIN EMPLEADOS"]
     lista_o = df_o['NOMBRE'].unique().tolist() if not df_o.empty else ["SIN OBRAS"]
 
-    with st.expander("Añadir Evento a Agenda"):
-        with st.form("f_agenda"):
-            col1, col2 = st.columns(2)
-            f_ini = col1.date_input("Fecha Inicio")
-            f_fin = col1.date_input("Fecha Fin")
-            tra = col2.selectbox("Trabajador Asignado", lista_e)
-            obr = col2.selectbox("Obra / Proyecto", lista_o)
-            fact = st.checkbox("¿Es un trabajo Facturable?", value=True)
-            notas = st.text_area("Notas")
-            
+    with st.expander("Añadir a la Agenda"):
+        with st.form("f_age"):
+            c1, c2 = st.columns(2)
+            f_i = c1.date_input("Inicio")
+            f_f = c1.date_input("Fin")
+            tra = c2.selectbox("Trabajador", lista_e)
+            obr = c2.selectbox("Obra", lista_o)
+            fac = st.selectbox("¿Facturable?", ["SÍ", "NO"])
             if st.form_submit_button("Agendar"):
-                ws_a.append_row([str(f_ini), str(f_fin), obr, tra, "SÍ" if fact else "NO", notas])
-                st.success("Evento agendado."); st.rerun()
+                ws_a.append_row([str(f_i), str(f_f), obr, tra, fac, ""])
+                st.rerun()
 
-    # Editor con desplegables para evitar errores
     df_ed = st.data_editor(df_a, num_rows="dynamic", use_container_width=True, column_config={
         "TRABAJADOR": st.column_config.SelectboxColumn("Trabajador", options=lista_e),
         "OBRA": st.column_config.SelectboxColumn("Obra", options=lista_o),
@@ -135,9 +162,9 @@ elif seccion == "Agenda":
     if st.button("Guardar Agenda"):
         ws_a.clear(); ws_a.update('A1', [df_ed.columns.tolist()] + df_ed.fillna("").values.tolist()); st.rerun()
 
-# --- MÓDULO DE IMPUTACIONES (CON LÓGICA DE FACTURACIÓN) ---
+# --- 🕒 IMPUTACIONES ---
 elif seccion == "Imputaciones":
-    st.header("🕒 Imputación de Horas Reales")
+    st.header("Imputación de Jornada")
     df_i, ws_i = asegurar_y_obtener_datos(sh, "Imputaciones")
     df_o, _ = asegurar_y_obtener_datos(sh, "Obras")
     df_e, _ = asegurar_y_obtener_datos(sh, "Empleados")
@@ -145,30 +172,19 @@ elif seccion == "Imputaciones":
     lista_e = df_e['NOMBRE'].unique().tolist() if not df_e.empty else ["SIN EMPLEADOS"]
     lista_o = df_o['NOMBRE'].unique().tolist() if not df_o.empty else ["SIN OBRAS"]
 
-    with st.expander("Registrar Parte de Trabajo"):
-        with st.form("f_imp"):
-            c1, c2 = st.columns(2)
-            f = c1.date_input("Fecha")
-            t = c1.selectbox("Trabajador", lista_e)
-            o = c1.selectbox("Obra", lista_o)
-            h = c2.slider("Horas (Máx 11h)", 0.0, 11.0, 8.0)
-            fact = c2.radio("Facturable", ["SÍ", "NO"])
-            if st.form_submit_button("Registrar"):
-                ws_i.append_row([str(f), t, o, h, 0, 0, 0, 0, 0, fact])
-                st.rerun()
-
     df_ed = st.data_editor(df_i, num_rows="dynamic", use_container_width=True, column_config={
         "TRABAJADOR": st.column_config.SelectboxColumn("Trabajador", options=lista_e),
         "OBRA": st.column_config.SelectboxColumn("Obra", options=lista_o),
-        "FACTURABLE": st.column_config.SelectboxColumn("Facturable", options=["SÍ", "NO"])
+        "FACTURABLE": st.column_config.SelectboxColumn("Facturable", options=["SÍ", "NO"]),
+        "HORAS_TOTALES": st.column_config.NumberColumn(min_value=0, max_value=11)
     })
-    if st.button("Guardar Imputaciones"):
+    if st.button("Sincronizar"):
         ws_i.clear(); ws_i.update('A1', [df_ed.columns.tolist()] + df_ed.fillna("").values.tolist()); st.rerun()
 
-# --- RESTO DE MÓDULOS ---
+# --- OTROS MÓDULOS ---
 else:
-    st.header(f"Gestión: {seccion}")
+    st.header(f"Módulo: {seccion}")
     df, ws = asegurar_y_obtener_datos(sh, seccion)
     df_ed = st.data_editor(df, num_rows="dynamic", use_container_width=True)
-    if st.button(f"Sincronizar {seccion}"):
+    if st.button(f"Guardar {seccion}"):
         ws.clear(); ws.update('A1', [df_ed.columns.tolist()] + df_ed.fillna("").values.tolist()); st.rerun()
