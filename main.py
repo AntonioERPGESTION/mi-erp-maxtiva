@@ -7,7 +7,7 @@ import time
 # --- CONFIGURACIÓN ---
 st.set_page_config(page_title="ERP MAXTIVA", layout="wide", page_icon="⚡")
 
-# URL de tu archivo (ID extraído para mayor estabilidad)
+# ID de tu archivo basado en el enlace que enviaste
 SPREADSHEET_ID = "1dJWM1dBQ5DfWQBIRKHja_YoMH_JeNXVu0ruOzlHQ3BM"
 
 def conectar():
@@ -17,7 +17,7 @@ def conectar():
         pk = creds_dict["private_key"]
         if "\\n" in pk: pk = pk.replace("\\n", "\n")
         
-        # Formateo estricto de la llave privada
+        # Limpieza de llave
         if "-----BEGIN PRIVATE KEY-----" in pk:
             cuerpo = pk.replace("-----BEGIN PRIVATE KEY-----", "").replace("-----END PRIVATE KEY-----", "").strip()
             cuerpo = "".join(cuerpo.split())
@@ -31,7 +31,7 @@ def conectar():
         client = gspread.authorize(creds)
         return client.open_by_key(SPREADSHEET_ID)
     except Exception as e:
-        st.error(f"Error de conexión con Google: {e}")
+        st.error(f"Error de conexión: {e}")
         return None
 
 # --- SESIÓN ---
@@ -48,90 +48,93 @@ def login():
             sh = conectar()
             if sh:
                 try:
-                    # Buscamos la hoja de usuarios (flexible)
+                    # BUSQUEDA FLEXIBLE DE PESTAÑA USUARIOS
                     hojas = [h.title for h in sh.worksheets()]
-                    h_user = next((h for h in hojas if "USER" in h.upper()), None)
+                    # Busca cualquier hoja que diga "USUARIO" ignorando espacios y mayúsculas
+                    h_user = next((h for h in hojas if "USUARIO" in h.upper().strip()), None)
+                    
                     if not h_user:
-                        st.error("No existe pestaña de USUARIOS")
+                        st.error(f"No se encontró la pestaña USUARIOS. Hojas disponibles: {hojas}")
                         return
 
-                    df_u = pd.DataFrame(sh.worksheet(h_user).get_all_records())
+                    ws_user = sh.worksheet(h_user)
+                    df_u = pd.DataFrame(ws_user.get_all_records())
+                    
+                    # Normalizar nombres de columnas de la foto: Usuario, CONTRASEÑA, Rol
                     df_u.columns = [str(c).upper().strip() for c in df_u.columns]
                     
-                    # Buscamos columnas de credenciales
-                    c_u = 'USUARIO' if 'USUARIO' in df_u.columns else df_u.columns[0]
-                    c_p = 'PASSWORD' if 'PASSWORD' in df_u.columns else ('CONTRASEÑA' if 'CONTRASEÑA' in df_u.columns else df_u.columns[1])
-                    
-                    match = df_u[(df_u[c_u].astype(str).str.strip() == u_in) & (df_u[c_p].astype(str).str.strip() == p_in)]
-                    
-                    if not match.empty:
-                        st.session_state.autenticado = True
-                        st.session_state.usuario = u_in
-                        st.session_state.rol = str(match.iloc[0].get('ROL', 'Empleado')).upper()
-                        st.rerun()
+                    # Columnas esperadas tras normalizar: USUARIO, CONTRASEÑA, ROL
+                    if 'USUARIO' in df_u.columns and 'CONTRASEÑA' in df_u.columns:
+                        match = df_u[
+                            (df_u['USUARIO'].astype(str).str.strip() == u_in) & 
+                            (df_u['CONTRASEÑA'].astype(str).str.strip() == p_in)
+                        ]
+                        
+                        if not match.empty:
+                            st.session_state.autenticado = True
+                            st.session_state.usuario = u_in
+                            st.session_state.rol = str(match.iloc[0]['ROL']).upper()
+                            st.rerun()
+                        else:
+                            st.error("Usuario o contraseña incorrectos")
                     else:
-                        st.error("Credenciales incorrectas")
+                        st.error(f"Columnas no coinciden. Detectadas: {list(df_u.columns)}")
                 except Exception as e:
-                    st.error(f"Fallo en login: {e}")
+                    st.error(f"Error en login: {e}")
 
 # --- APP PRINCIPAL ---
 if not st.session_state.autenticado:
     login()
 else:
     st.sidebar.title("ERP MAXTIVA")
-    st.sidebar.info(f"Usuario: {st.session_state.usuario}\nRol: {st.session_state.rol}")
+    st.sidebar.success(f"Bienvenido: {st.session_state.usuario}")
     
-    # Módulos funcionando
-    modulos = {
-        "Empresas": "CLIENTES",
-        "Gastos": "GASTOS",
-        "Obras": "OBRAS",
-        "Inventario": "INVENTARIO"
+    # Módulos según tus pestañas de la foto
+    menu = {
+        "Obras": "Obras",
+        "Inventario": "Inventario",
+        "Reportes": "Reportes",
+        "Empleados": "Empleados",
+        "Usuarios": "USUARIOS"
     }
-    seleccion = st.sidebar.radio("Menú", list(modulos.keys()))
     
-    if st.sidebar.button("Salir"):
+    opcion = st.sidebar.radio("Menú Principal", list(menu.keys()))
+    
+    if st.sidebar.button("Cerrar Sesión"):
         st.session_state.autenticado = False
         st.rerun()
 
     sh = conectar()
     if sh:
         try:
-            # Lógica de búsqueda "tolerante" para las pestañas
             hojas_reales = [h.title for h in sh.worksheets()]
-            objetivo = modulos[seleccion]
+            objetivo = menu[opcion].upper()
             
-            # Intenta coincidencia exacta, si no, busca por contenido
-            hoja_a_abrir = next((h for h in hojas_reales if h.upper().strip() == objetivo), None)
-            if not hoja_a_abrir:
-                hoja_a_abrir = next((h for h in hojas_reales if objetivo in h.upper()), None)
+            # Buscar la hoja real que coincida con la opción
+            hoja_a_abrir = next((h for h in hojas_reales if objetivo in h.upper().strip()), None)
 
             if hoja_a_abrir:
                 ws = sh.worksheet(hoja_a_abrir)
-                raw_data = ws.get_all_values()
-                
-                if len(raw_data) > 0:
-                    df = pd.DataFrame(raw_data[1:], columns=raw_data[0])
+                datos = ws.get_all_values()
+                if len(datos) > 0:
+                    df = pd.DataFrame(datos[1:], columns=datos[0])
                 else:
                     df = pd.DataFrame()
 
-                st.header(f"Módulo: {seleccion}")
+                st.header(f"Sección: {opcion}")
                 
-                if st.session_state.rol == "ADMIN":
-                    st.success("Modo Edición Activado")
-                    df_ed = st.data_editor(df, num_rows="dynamic", use_container_width=True, key=f"ed_{seleccion}")
-                    if st.button("Guardar Cambios"):
-                        with st.spinner("Sincronizando..."):
-                            ws.clear()
-                            final_data = [df_ed.columns.tolist()] + df_ed.fillna("").values.tolist()
-                            ws.update('A1', final_data)
-                            st.toast("¡Guardado!")
-                            time.sleep(1)
-                            st.rerun()
+                # Si es Admin puede editar, si no, solo ver
+                if "ADMIN" in st.session_state.rol:
+                    df_ed = st.data_editor(df, num_rows="dynamic", use_container_width=True, key=f"ed_{opcion}")
+                    if st.button("💾 GUARDAR CAMBIOS"):
+                        ws.clear()
+                        ws.update('A1', [df_ed.columns.tolist()] + df_ed.fillna("").values.tolist())
+                        st.success("¡Datos actualizados!")
+                        time.sleep(1)
+                        st.rerun()
                 else:
-                    st.info("Vista de Consulta")
                     st.dataframe(df, use_container_width=True)
             else:
-                st.error(f"Error: La pestaña '{objetivo}' no existe en el Excel. Pestañas encontradas: {hojas_reales}")
+                st.error(f"Pestaña '{objetivo}' no encontrada en el Excel.")
         except Exception as e:
-            st.error(f"Error al cargar módulo: {e}")
+            st.error(f"Error al cargar datos: {e}")
