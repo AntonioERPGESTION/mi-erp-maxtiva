@@ -12,7 +12,7 @@ st.set_page_config(page_title="ERP MAXTIVA - GESTIÓN TOTAL", layout="wide", pag
 SPREADSHEET_ID = "1dJWM1dBQ5DfWQBIRKHja_YoMH_JeNXVu0ruOzlHQ3BM"
 LOGOS = ["logo_maxtiva.png", "logo_ceta.png", "logo_ipalux.png"]
 
-# Estructura Maestra Integrada
+# Estructura Maestra
 ESTRUCTURA_BBDD = {
     "USUARIOS": ["USUARIO", "CONTRASEÑA", "ROL"],
     "Obras": ["NOMBRE", "PRESUPUESTO", "CLIENTE", "ESTADO"],
@@ -45,20 +45,26 @@ def asegurar_y_obtener_datos(sh, nombre_hoja):
             ws.append_row(columnas_nec)
         
         data = ws.get_all_values()
-        if not data or len(data) == 0:
+        if not data or len(data) <= 1:
             return pd.DataFrame(columns=columnas_nec), ws
         
+        # NORMALIZACIÓN CRÍTICA: Mayúsculas y sin espacios
         df = pd.DataFrame(data[1:], columns=[c.upper().strip() for c in data[0]])
+        
+        # Crear columnas faltantes con ceros
         for c in columnas_nec:
-            if c not in df.columns: df[c] = ""
-        return df.fillna(""), ws
+            if c.upper() not in df.columns:
+                df[c.upper()] = "0"
+        return df.fillna("0"), ws
     except:
         return pd.DataFrame(columns=columnas_nec), None
 
 def to_num(val):
-    if val is None or str(val).strip() in ["", "None"]: return 0.0
+    if val is None or str(val).strip() in ["", "None", "NaN"]: return 0.0
     try:
-        return float(str(val).replace('€', '').replace(' ', '').replace(',', '.'))
+        # Limpiar moneda y formatos europeos
+        s = str(val).replace('€', '').replace(' ', '').replace(',', '.')
+        return float(s)
     except: return 0.0
 
 # --- SESIÓN ---
@@ -75,105 +81,58 @@ if not st.session_state.autenticado:
                 st.session_state.autenticado = True; st.rerun()
     st.stop()
 
-# --- MENÚ LATERAL ---
+# --- MENÚ ---
 with st.sidebar:
     for l in LOGOS:
         if os.path.exists(l): st.image(l, width=100)
-    seccion = st.selectbox("Gestión Central", ["📊 Dashboard de Producción", "📅 Agenda y Tareas Extras", "🕒 Imputación de Partes", "🏗️ Obras", "👥 Personal", "📦 Almacén/Inventario", "🛒 Pedidos", "⚠️ Incidencias", "⚙️ Usuarios"])
-    if st.button("Cerrar Sesión"):
+    seccion = st.selectbox("Módulos", ["📊 Dashboard", "📅 Agenda/Tareas", "🕒 Imputaciones", "🏗️ Obras", "👥 Personal", "📦 Inventario"])
+    if st.button("Salir"):
         st.session_state.autenticado = False; st.rerun()
 
-# --- 📊 DASHBOARD DE PRODUCCIÓN ---
-if seccion == "📊 Dashboard de Producción":
-    st.header("Análisis de Costes y Facturación Extras")
+# --- DASHBOARD (CORREGIDO) ---
+if seccion == "📊 Dashboard":
+    st.header("Análisis de Costes")
     df_i, _ = asegurar_y_obtener_datos(sh, "Imputaciones")
     df_o, _ = asegurar_y_obtener_datos(sh, "Obras")
     
-    if not df_o.empty:
-        # Cálculos de Facturación
-        df_i['H_NUM'] = df_i['HORAS_TOTALES'].apply(to_num)
-        df_i['MAT_NUM'] = df_i['COSTE_MATERIALES'].apply(to_num)
-        df_i['VIAJE_NUM'] = df_i[['DIETAS', 'GASOLINA', 'PEAJES']].applymap(to_num).sum(axis=1)
+    if not df_i.empty:
+        # Convertir a número de forma segura uno a uno para evitar el AttributeError
+        cols_a_sumar = ['DIETAS', 'GASOLINA', 'PEAJES']
+        for c in cols_a_sumar:
+            if c not in df_i.columns: df_i[c] = 0
+            df_i[c] = df_i[c].apply(to_num)
         
-        # Solo lo que hemos marcado como facturable
-        df_fact = df_i[df_i['FACTURABLE'] == 'SÍ'].copy()
-        resumen = df_fact.groupby('OBRA')[['H_NUM', 'MAT_NUM', 'VIAJE_NUM']].sum().reset_index()
-        resumen['TOTAL_A_FACTURAR'] = resumen['H_NUM']*25 + resumen['MAT_NUM'] + resumen['VIAJE_NUM'] # Ejemplo: 25€/h
+        df_i['VIAJE_TOTAL'] = df_i[cols_a_sumar].sum(axis=1)
+        df_i['H_TOTAL'] = df_i['HORAS_TOTALES'].apply(to_num)
+        
+        res = df_i.groupby('OBRA')[['VIAJE_TOTAL', 'H_TOTAL']].sum().reset_index()
+        st.plotly_chart(px.bar(res, x='OBRA', y=['VIAJE_TOTAL', 'H_TOTAL'], barmode='group'))
+    else:
+        st.info("No hay datos de imputación todavía.")
 
-        c1, c2 = st.columns(2)
-        with c1:
-            st.subheader("Pendiente de Facturar por Obra (€)")
-            st.plotly_chart(px.bar(resumen, x='OBRA', y='TOTAL_A_FACTURAR', color='OBRA'))
-        with c2:
-            st.subheader("Desglose de Costes Extras")
-            st.plotly_chart(px.pie(resumen, values='TOTAL_A_FACTURAR', names='OBRA', hole=.3))
-
-# --- 📅 AGENDA Y TAREAS EXTRAS ---
-elif seccion == "📅 Agenda y Tareas Extras":
-    st.header("Planificación de Trabajos y Tareas Extras")
-    df_a, ws_a = asegurar_y_obtener_datos(sh, "Agenda_Tareas")
-    df_o, _ = asegurar_y_obtener_datos(sh, "Obras")
-    df_e, _ = asegurar_y_obtener_datos(sh, "Personal")
-
-    with st.expander("📝 Crear Nueva Tarea / Orden de Trabajo"):
-        with st.form("f_tarea"):
-            c1, c2 = st.columns(2)
-            fecha = c1.date_input("Fecha Programada")
-            obra = c1.selectbox("Obra", df_o['NOMBRE'].unique() if not df_o.empty else ["-"])
-            tra = c2.selectbox("Trabajador", df_e['NOMBRE'].unique() if not df_e.empty else ["-"])
-            horas_p = c2.number_input("Horas Previstas", 0.0)
-            desc = st.text_area("Descripción del Trabajo Extra")
-            fact = st.checkbox("¿Trabajo Facturable a Cliente?", value=True)
-            
-            if st.form_submit_button("Añadir a Agenda"):
-                ws_a.append_row([str(fecha), tra, obra, desc, horas_p, "SÍ" if fact else "NO", "PENDIENTE"])
-                st.rerun()
-
-    st.subheader("Listado de Tareas Programadas")
-    df_ed = st.data_editor(df_a, num_rows="dynamic", use_container_width=True, column_config={
-        "ESTADO": st.column_config.SelectboxColumn(options=["PENDIENTE", "EN CURSO", "FINALIZADO"]),
-        "FACTURABLE": st.column_config.SelectboxColumn(options=["SÍ", "NO"])
-    })
-    if st.button("Guardar Cambios Agenda"):
-        ws_a.clear(); ws_a.update('A1', [df_ed.columns.tolist()] + df_ed.fillna("").values.tolist()); st.rerun()
-
-# --- 🕒 IMPUTACIÓN DE PARTES (CON MATERIALES) ---
-elif seccion == "🕒 Imputación de Partes":
-    st.header("Carga de Partes de Trabajo y Materiales")
-    df_i, ws_i = asegurar_y_obtener_datos(sh, "Imputaciones")
-    df_o, _ = asegurar_y_obtener_datos(sh, "Obras")
-    df_e, _ = asegurar_y_obtener_datos(sh, "Personal")
-    df_v, _ = asegurar_y_obtener_datos(sh, "Almacén/Inventario")
-
-    with st.expander("➕ Subir Parte de Trabajo"):
-        with st.form("f_parte"):
-            c1, c2, c3 = st.columns(3)
-            f = c1.date_input("Fecha")
-            o = c1.selectbox("Obra", df_o['NOMBRE'].unique() if not df_o.empty else ["-"])
-            t = c2.selectbox("Trabajador", df_e['NOMBRE'].unique() if not df_e.empty else ["-"])
-            h = c2.number_input("Horas Reales", 0.0, 11.0)
-            
-            mat = c3.multiselect("Materiales Utilizados", df_v['ARTICULO'].unique() if not df_v.empty else [])
-            c_mat = c3.number_input("Coste Total Materiales (€)", 0.0)
-            
-            ext = st.text_input("Referencia Tarea Extra (Si procede)")
-            fac = st.radio("¿Es Facturable?", ["SÍ", "NO"], horizontal=True)
-            
-            if st.form_submit_button("Registrar Parte"):
-                ws_i.append_row([str(f), t, o, ext, h, ", ".join(mat), c_mat, 0, 0, 0, fac])
-                st.success("Parte registrado y vinculado."); st.rerun()
-
-    st.subheader("Histórico de Imputaciones")
-    df_ed = st.data_editor(df_i, num_rows="dynamic", use_container_width=True)
-    if st.button("Actualizar Histórico"):
-        ws_i.clear(); ws_i.update('A1', [df_ed.columns.tolist()] + df_ed.fillna("").values.tolist()); st.rerun()
-
-# --- RESTO DE MÓDULOS ---
+# --- MÓDULOS DE DATOS ---
 else:
-    mapa = {"🏗️ Obras":"Obras", "👥 Personal":"Empleados", "📦 Almacén/Inventario":"Inventario", "🛒 Pedidos":"Pedidos", "⚠️ Incidencias":"Incidencias", "⚙️ Usuarios":"USUARIOS"}
-    nombre_h = mapa[seccion]
+    # Mapeo de nombres para evitar errores de carga
+    mapa = {"📅 Agenda/Tareas":"Agenda_Tareas", "🕒 Imputaciones":"Imputaciones", "🏗️ Obras":"Obras", "👥 Personal":"Empleados", "📦 Inventario":"Inventario"}
+    target = mapa[seccion]
+    
     st.header(f"Gestión de {seccion}")
-    df, ws = asegurar_y_obtener_datos(sh, nombre_h)
-    df_ed = st.data_editor(df, num_rows="dynamic", use_container_width=True)
-    if st.button(f"Sincronizar {seccion}"):
-        ws.clear(); ws.update('A1', [df_ed.columns.tolist()] + df_ed.fillna("").values.tolist()); st.rerun()
+    df, ws = asegurar_y_obtener_datos(sh, target)
+    
+    # Configuración de selectores si es Imputación o Agenda
+    config = {}
+    if target in ["Imputaciones", "Agenda_Tareas"]:
+        df_e, _ = asegurar_y_obtener_datos(sh, "Empleados")
+        df_o, _ = asegurar_y_obtener_datos(sh, "Obras")
+        config = {
+            "TRABAJADOR": st.column_config.SelectboxColumn(options=df_e['NOMBRE'].unique().tolist() if not df_e.empty else ["-"]),
+            "OBRA": st.column_config.SelectboxColumn(options=df_o['NOMBRE'].unique().tolist() if not df_o.empty else ["-"]),
+            "FACTURABLE": st.column_config.SelectboxColumn(options=["SÍ", "NO"])
+        }
+
+    df_ed = st.data_editor(df, num_rows="dynamic", use_container_width=True, column_config=config)
+    
+    if st.button(f"💾 Guardar {seccion}"):
+        ws.clear()
+        ws.update('A1', [df_ed.columns.tolist()] + df_ed.fillna("").values.tolist())
+        st.success("Guardado correctamente"); st.rerun()
