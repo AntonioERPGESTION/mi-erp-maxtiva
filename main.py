@@ -5,20 +5,17 @@ import pandas as pd
 import plotly.express as px
 import os
 
-# --- CONFIGURACIÓN DE PÁGINA ---
+# --- CONFIGURACIÓN ---
 st.set_page_config(page_title="ERP GRUPO MAXTIVA", layout="wide", page_icon="⚡")
 
 SPREADSHEET_ID = "1dJWM1dBQ5DfWQBIRKHja_YoMH_JeNXVu0ruOzlHQ3BM"
-# Nombres exactos de tus archivos en la raíz
 LOGOS = ["logo_maxtiva.png", "logo_ceta.png", "logo_ipalux.png"]
 
-# --- CONEXIÓN CON CACHE (Para evitar desconexiones) ---
 @st.cache_resource
 def conectar_bbdd():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     try:
         creds_dict = dict(st.secrets["gcp_service_account"])
-        pk = creds_dict["private_key"].replace("\\n", "\n")
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         return gspread.authorize(creds).open_by_key(SPREADSHEET_ID)
     except Exception as e:
@@ -29,140 +26,118 @@ def obtener_datos(sh, nombre_hoja):
     try:
         ws = sh.worksheet(nombre_hoja)
         data = ws.get_all_values()
-        if not data:
-            return pd.DataFrame(), ws
-        
+        if not data: return pd.DataFrame(), ws
         df = pd.DataFrame(data[1:], columns=data[0])
-        # Normalizar cabeceras
         df.columns = [str(c).upper().strip() for c in df.columns]
-        # Limpieza de espacios en celdas
-        df = df.apply(lambda x: x.str.strip() if x.dtype == "object" else x)
         return df, ws
-    except Exception as e:
-        st.sidebar.error(f"Error en hoja {nombre_hoja}: {e}")
+    except:
         return pd.DataFrame(), None
 
-# --- ESTADO DE SESIÓN ---
+# --- SESIÓN ---
 if 'autenticado' not in st.session_state:
     st.session_state.autenticado = False
 
-# --- PANTALLA DE LOGIN ---
+# --- LOGIN (Simplificado para persistencia) ---
 if not st.session_state.autenticado:
     c1, c2, c3 = st.columns([1, 2, 1])
     with c2:
-        # Mostrar logos en el login
         l_cols = st.columns(3)
-        for i, l_name in enumerate(LOGOS):
-            if os.path.exists(l_name):
-                l_cols[i].image(l_name, use_container_width=True)
-        
+        for i, l in enumerate(LOGOS):
+            if os.path.exists(l): l_cols[i].image(l, use_container_width=True)
         st.title("Acceso ERP Maxtiva")
         with st.form("Login"):
             u = st.text_input("Usuario")
             p = st.text_input("Contraseña", type="password")
             if st.form_submit_button("Entrar"):
                 sh = conectar_bbdd()
-                if sh:
-                    df_u, _ = obtener_datos(sh, "USUARIOS")
-                    if not df_u.empty:
-                        # Buscamos columna contraseña (con Ñ o sin ella)
-                        col_p = 'CONTRASEÑA' if 'CONTRASEÑA' in df_u.columns else 'PASSWORD'
-                        match = df_u[(df_u['USUARIO'] == u) & (df_u[col_p] == p)]
-                        if not match.empty:
-                            st.session_state.autenticado = True
-                            st.session_state.usuario = u
-                            st.session_state.rol = str(match.iloc[0].get('ROL', 'EMPLEADO')).upper()
-                            st.rerun()
-                    st.error("Usuario o contraseña incorrectos.")
+                df_u, _ = obtener_datos(sh, "USUARIOS")
+                if not df_u.empty:
+                    col_p = 'CONTRASEÑA' if 'CONTRASEÑA' in df_u.columns else 'PASSWORD'
+                    match = df_u[(df_u['USUARIO'].astype(str) == u) & (df_u[col_p].astype(str) == p)]
+                    if not match.empty:
+                        st.session_state.autenticado, st.session_state.usuario = True, u
+                        st.session_state.rol = str(match.iloc[0].get('ROL', 'EMPLEADO')).upper()
+                        st.rerun()
+                st.error("Error de acceso")
     st.stop()
 
-# --- APP PRINCIPAL (Si está autenticado) ---
 sh = conectar_bbdd()
 
+# --- SIDEBAR ---
 with st.sidebar:
-    # Logos en el menú lateral
-    for l_name in LOGOS:
-        if os.path.exists(l_name):
-            st.image(l_name, width=120)
-    
-    st.write("---")
-    st.write(f"👤 **{st.session_state.usuario}**")
-    st.write(f"🔑 Rol: `{st.session_state.rol}`")
-    st.write("---")
-    
-    menu = st.radio("Módulos", [
-        "📊 Dashboard", "🏗️ Obras", "💰 Gastos", 
-        "👥 Personal", "📦 Inventario", "📅 Agenda", 
-        "📝 Pedidos/Incidencias", "⚙️ Sistema"
-    ])
-    
+    for l in LOGOS:
+        if os.path.exists(l): st.image(l, width=120)
+    st.write(f"👤 **{st.session_state.usuario}** ({st.session_state.rol})")
+    menu = st.radio("Menú", ["📊 Dashboard", "💰 Carga de Gastos", "🏗️ Obras", "👥 Personal", "⚙️ Sistema"])
     if st.button("Cerrar Sesión"):
         st.session_state.autenticado = False
         st.rerun()
 
-# --- MÓDULO DASHBOARD (REPARADO) ---
+# --- MÓDULO 1: DASHBOARD REPARADO ---
 if menu == "📊 Dashboard":
-    st.header("Dashboard de Gestión")
+    st.header("Análisis de Gastos por Obra")
     df_g, _ = obtener_datos(sh, "Gastos_Detalle")
     df_o, _ = obtener_datos(sh, "Obras")
     
     if not df_g.empty and not df_o.empty:
-        # Forzar conversión numérica de importes y presupuestos
-        df_g['IMPORTE'] = pd.to_numeric(df_g['IMPORTE'], errors='coerce').fillna(0)
-        df_o['PRESUPUESTO'] = pd.to_numeric(df_o['PRESUPUESTO'], errors='coerce').fillna(0)
+        # Limpieza de datos numéricos
+        df_g['IMPORTE'] = pd.to_numeric(df_g['IMPORTE'].astype(str).str.replace(',','.'), errors='coerce').fillna(0)
+        df_o['PRESUPUESTO'] = pd.to_numeric(df_o['PRESUPUESTO'].astype(str).str.replace(',','.'), errors='coerce').fillna(0)
         
-        # Agrupar gastos por obra
+        # Agrupar y cruzar
         g_obra = df_g.groupby('OBRA')['IMPORTE'].sum().reset_index().rename(columns={'OBRA':'NOMBRE', 'IMPORTE':'GASTO_REAL'})
-        
-        # Cruzar con tabla de obras
         df_plot = pd.merge(df_o, g_obra, on='NOMBRE', how='left').fillna(0)
         
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Gasto Total", f"{df_g['IMPORTE'].sum():,.2f} €")
-        c2.metric("Nº Obras", len(df_o))
-        c3.metric("Ppto. Total", f"{df_o['PRESUPUESTO'].sum():,.2f} €")
-        
-        if not df_plot.empty:
-            fig = px.bar(df_plot, x='NOMBRE', y=['PRESUPUESTO', 'GASTO_REAL'], 
-                         barmode='group', title="Presupuesto vs Gasto Real",
-                         color_discrete_map={"PRESUPUESTO": "#1f77b4", "GASTO_REAL": "#ef553b"})
+        c1, c2 = st.columns([1, 2])
+        with c1:
+            st.metric("Total Gastado", f"{df_g['IMPORTE'].sum():,.2f} €")
+            st.dataframe(df_plot[['NOMBRE', 'PRESUPUESTO', 'GASTO_REAL']], hide_index=True)
+        with c2:
+            fig = px.bar(df_plot, x='NOMBRE', y=['PRESUPUESTO', 'GASTO_REAL'], barmode='group', title="Presupuesto vs Gasto Real")
             st.plotly_chart(fig, use_container_width=True)
     else:
-        st.info("No hay datos suficientes para mostrar gráficos. Revisa las hojas 'Obras' y 'Gastos_Detalle'.")
+        st.warning("Faltan datos en Obras o Gastos_Detalle")
 
-# --- MÓDULOS DE DATOS ---
-elif menu in ["🏗️ Obras", "💰 Gastos", "👥 Personal", "📦 Inventario", "📅 Agenda", "📝 Pedidos/Incidencias"]:
-    mapa = {
-        "🏗️ Obras": "Obras", "💰 Gastos": "Gastos_Detalle", 
-        "👥 Personal": "Empleados", "📦 Inventario": "Inventario",
-        "📅 Agenda": "Planificacion", "📝 Pedidos/Incidencias": "Incidencias"
-    }
-    nombre_h = mapa[menu]
-    df, ws = obtener_datos(sh, nombre_h)
+# --- MÓDULO 2: CARGA DE GASTOS CON DESPLEGABLES ---
+elif menu == "💰 Carga de Gastos":
+    st.header("Registro de Gastos")
+    df_g, ws_g = obtener_datos(sh, "Gastos_Detalle")
+    df_o, _ = obtener_datos(sh, "Obras")
+    df_e, _ = obtener_datos(sh, "Empleados")
     
-    st.subheader(f"Gestión de {nombre_h}")
-    
-    if st.session_state.rol == "ADMIN":
-        df_ed = st.data_editor(df, num_rows="dynamic", use_container_width=True, key=f"ed_{nombre_h}")
-        if st.button("💾 Guardar Cambios"):
-            ws.clear()
-            # Reinsertar cabeceras + datos
-            ws.update('A1', [df_ed.columns.tolist()] + df_ed.fillna("").values.tolist())
-            st.success("¡Datos actualizados en Google Sheets!")
-            st.rerun()
-    else:
-        st.dataframe(df, use_container_width=True)
+    # Preparamos las listas para los desplegables
+    lista_obras = df_o['NOMBRE'].unique().tolist() if not df_o.empty else []
+    lista_trabajadores = df_e['NOMBRE'].unique().tolist() if not df_e.empty else []
 
-# --- MÓDULO SISTEMA ---
-elif menu == "⚙️ Sistema":
-    st.header("Configuración")
-    if st.session_state.rol == "ADMIN":
-        st.write("Administración de Usuarios")
-        df_u, ws_u = obtener_datos(sh, "USUARIOS")
-        df_u_ed = st.data_editor(df_u, num_rows="dynamic", use_container_width=True)
-        if st.button("Guardar Usuarios"):
-            ws_u.clear()
-            ws_u.update('A1', [df_u_ed.columns.tolist()] + df_u_ed.values.tolist())
-            st.success("Usuarios actualizados.")
-    else:
-        st.error("No tienes permisos.")
+    st.info("Utiliza los desplegables en las columnas 'OBRA' y 'TRABAJADOR' para evitar errores.")
+    
+    # Editor con validación de columnas
+    df_ed = st.data_editor(
+        df_g,
+        num_rows="dynamic",
+        use_container_width=True,
+        column_config={
+            "OBRA": st.column_config.SelectboxColumn("Seleccionar Obra", options=lista_obras, required=True),
+            "TRABAJADOR": st.column_config.SelectboxColumn("Seleccionar Trabajador", options=lista_trabajadores, required=True),
+            "IMPORTE": st.column_config.NumberColumn("Importe (€)", format="%.2f"),
+            "FECHA": st.column_config.DateColumn("Fecha")
+        }
+    )
+    
+    if st.button("💾 Guardar Gastos"):
+        ws_g.clear()
+        ws_g.update('A1', [df_ed.columns.tolist()] + df_ed.fillna("").values.tolist())
+        st.success("Gastos guardados y Dashboard actualizado.")
+        st.rerun()
+
+# --- RESTO DE MÓDULOS ---
+elif menu in ["🏗️ Obras", "👥 Personal", "⚙️ Sistema"]:
+    tablas = {"🏗️ Obras": "Obras", "👥 Personal": "Empleados", "⚙️ Sistema": "USUARIOS"}
+    nombre = tablas[menu]
+    df, ws = obtener_datos(sh, nombre)
+    
+    df_ed = st.data_editor(df, num_rows="dynamic", use_container_width=True)
+    if st.button(f"💾 Guardar {nombre}"):
+        ws.clear()
+        ws.update('A1', [df_ed.columns.tolist()] + df_ed.fillna("").values.tolist())
+        st.success("Actualizado")
