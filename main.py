@@ -54,10 +54,8 @@ def login():
                     ws_user = sh.worksheet(hoja_user_real)
                     usuarios_df = pd.DataFrame(ws_user.get_all_records())
                     
-                    # Normalizamos columnas a mayúsculas
                     usuarios_df.columns = [str(c).upper().strip() for c in usuarios_df.columns]
                     
-                    # CAMBIO CLAVE: Ahora buscamos 'PASSWORD' en lugar de 'CONTRASEÑA'
                     col_user = 'USUARIO'
                     col_pass = 'PASSWORD' if 'PASSWORD' in usuarios_df.columns else 'CONTRASEÑA'
                     col_rol = 'ROL'
@@ -78,7 +76,7 @@ def login():
                         else:
                             st.error("Usuario o contraseña incorrectos")
                     else:
-                        st.error(f"Faltan columnas. Detectadas: {list(usuarios_df.columns)}")
+                        st.error(f"Faltan columnas en USUARIOS. Detectadas: {list(usuarios_df.columns)}")
                 except Exception as e:
                     st.error(f"Error en el sistema de usuarios: {e}")
 
@@ -106,29 +104,39 @@ else:
                 "Inventario": "INVENTARIO"
             }
             objetivo = mapa_nombres[opcion]
-            hoja_real = next((h for h in lista_hojas if h.upper().strip() == objetivo), objetivo)
+            hoja_real = next((h for h in lista_hojas if h.upper().strip() == objetivo), None)
             
-            ws = sh.worksheet(hoja_real)
-            datos = ws.get_all_records()
-            df = pd.DataFrame(datos)
-
-            st.header(f"Gestión de {opcion}")
-
-            if str(st.session_state.rol).upper() == "ADMIN":
-                st.info(f"💡 Editando hoja: {hoja_real}")
-                df_editado = st.data_editor(df, num_rows="dynamic", use_container_width=True, key=f"ed_{hoja_real}")
+            if hoja_real:
+                ws = sh.worksheet(hoja_real)
+                # Obtenemos todos los valores de la hoja
+                lista_datos = ws.get_all_values()
                 
-                if st.button(f"💾 Guardar Cambios"):
-                    with st.spinner("Guardando..."):
-                        ws.clear()
-                        datos_a_subir = [df_editado.columns.tolist()] + df_editado.values.tolist()
-                        ws.update('A1', datos_a_subir)
-                        st.success("¡Sincronizado!")
-                        time.sleep(1)
-                        st.rerun()
+                if len(lista_datos) > 0:
+                    # La primera fila son los encabezados
+                    df = pd.DataFrame(lista_datos[1:], columns=lista_datos[0])
+                else:
+                    df = pd.DataFrame()
+
+                st.header(f"Gestión de {opcion}")
+
+                if str(st.session_state.rol).upper() == "ADMIN":
+                    st.info(f"💡 Editando hoja: {hoja_real}")
+                    # Usamos un editor que permite celdas vacías
+                    df_editado = st.data_editor(df, num_rows="dynamic", use_container_width=True, key=f"ed_{hoja_real}")
+                    
+                    if st.button(f"💾 Guardar Cambios"):
+                        with st.spinner("Guardando en Google Sheets..."):
+                            ws.clear()
+                            # Preparamos los datos para subir
+                            datos_a_subir = [df_editado.columns.tolist()] + df_editado.fillna("").values.tolist()
+                            ws.update('A1', datos_a_subir)
+                            st.success("¡Sincronizado correctamente!")
+                            time.sleep(1)
+                            st.rerun()
+                else:
+                    st.dataframe(df, use_container_width=True)
             else:
-                st.dataframe(df, use_container_width=True)
-                st.warning("Solo lectura (Empleado)")
+                st.error(f"No se encontró la pestaña '{objetivo}' en el archivo Excel.")
 
         except Exception as e:
             st.error(f"Error al cargar '{opcion}': {e}")
