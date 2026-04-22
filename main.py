@@ -4,20 +4,20 @@ from oauth2client.service_account import ServiceAccountCredentials
 import pandas as pd
 import time
 
-# --- CONFIGURACIÓN ---
+# --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="ERP MAXTIVA", layout="wide", page_icon="⚡")
 
-# ID de tu archivo basado en el enlace que enviaste
+# ID de tu Google Sheet (verificado por tu enlace)
 SPREADSHEET_ID = "1dJWM1dBQ5DfWQBIRKHja_YoMH_JeNXVu0ruOzlHQ3BM"
 
 def conectar():
+    """Conexión con limpieza de llave para Streamlit Cloud"""
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     try:
         creds_dict = dict(st.secrets["gcp_service_account"])
         pk = creds_dict["private_key"]
-        if "\\n" in pk: pk = pk.replace("\\n", "\n")
         
-        # Limpieza de llave
+        if "\\n" in pk: pk = pk.replace("\\n", "\n")
         if "-----BEGIN PRIVATE KEY-----" in pk:
             cuerpo = pk.replace("-----BEGIN PRIVATE KEY-----", "").replace("-----END PRIVATE KEY-----", "").strip()
             cuerpo = "".join(cuerpo.split())
@@ -34,51 +34,51 @@ def conectar():
         st.error(f"Error de conexión: {e}")
         return None
 
-# --- SESIÓN ---
+# --- LÓGICA DE SESIÓN ---
 if 'autenticado' not in st.session_state:
     st.session_state.autenticado = False
 
-# --- LOGIN ---
+# --- PANTALLA DE LOGIN ---
 def login():
-    st.title("⚡ ERP MAXTIVA")
-    with st.form("Acceso"):
-        u_in = st.text_input("Usuario").strip()
-        p_in = st.text_input("Contraseña", type="password").strip()
+    st.title("⚡ ERP MAXTIVA - Acceso")
+    with st.form("Login"):
+        u_input = st.text_input("Usuario").strip()
+        p_input = st.text_input("Contraseña", type="password").strip()
+        
         if st.form_submit_button("Entrar"):
             sh = conectar()
             if sh:
                 try:
-                    # BUSQUEDA FLEXIBLE DE PESTAÑA USUARIOS
+                    # Buscamos la pestaña USUARIOS (insensible a mayúsculas/espacios)
                     hojas = [h.title for h in sh.worksheets()]
-                    # Busca cualquier hoja que diga "USUARIO" ignorando espacios y mayúsculas
-                    h_user = next((h for h in hojas if "USUARIO" in h.upper().strip()), None)
+                    h_user_name = next((h for h in hojas if "USUARIO" in h.upper().strip()), None)
                     
-                    if not h_user:
-                        st.error(f"No se encontró la pestaña USUARIOS. Hojas disponibles: {hojas}")
+                    if not h_user_name:
+                        st.error("No se encontró la pestaña 'USUARIOS'.")
                         return
 
-                    ws_user = sh.worksheet(h_user)
-                    df_u = pd.DataFrame(ws_user.get_all_records())
+                    ws_user = sh.worksheet(h_user_name)
+                    df_user = pd.DataFrame(ws_user.get_all_records())
                     
-                    # Normalizar nombres de columnas de la foto: Usuario, CONTRASEÑA, Rol
-                    df_u.columns = [str(c).upper().strip() for c in df_u.columns]
+                    # Normalizamos columnas según tu foto (Usuario, CONTRASEÑA, Rol)
+                    df_user.columns = [str(c).upper().strip() for c in df_user.columns]
                     
-                    # Columnas esperadas tras normalizar: USUARIO, CONTRASEÑA, ROL
-                    if 'USUARIO' in df_u.columns and 'CONTRASEÑA' in df_u.columns:
-                        match = df_u[
-                            (df_u['USUARIO'].astype(str).str.strip() == u_in) & 
-                            (df_u['CONTRASEÑA'].astype(str).str.strip() == p_in)
-                        ]
-                        
-                        if not match.empty:
-                            st.session_state.autenticado = True
-                            st.session_state.usuario = u_in
-                            st.session_state.rol = str(match.iloc[0]['ROL']).upper()
-                            st.rerun()
-                        else:
-                            st.error("Usuario o contraseña incorrectos")
+                    # Verificamos credenciales
+                    match = df_user[
+                        (df_user['USUARIO'].astype(str).str.strip() == u_input) & 
+                        (df_user['CONTRASEÑA'].astype(str).str.strip() == p_input)
+                    ]
+                    
+                    if not match.empty:
+                        st.session_state.autenticado = True
+                        st.session_state.usuario = u_input
+                        # Importante: según tu foto es "Admin" o "Empleado"
+                        st.session_state.rol = str(match.iloc[0]['ROL']).upper().strip()
+                        st.success("Acceso correcto")
+                        time.sleep(0.5)
+                        st.rerun()
                     else:
-                        st.error(f"Columnas no coinciden. Detectadas: {list(df_u.columns)}")
+                        st.error("Usuario o contraseña incorrectos")
                 except Exception as e:
                     st.error(f"Error en login: {e}")
 
@@ -86,19 +86,24 @@ def login():
 if not st.session_state.autenticado:
     login()
 else:
-    st.sidebar.title("ERP MAXTIVA")
-    st.sidebar.success(f"Bienvenido: {st.session_state.usuario}")
+    st.sidebar.title("⚡ ERP MAXTIVA")
+    st.sidebar.write(f"Usuario: **{st.session_state.usuario}**")
     
-    # Módulos según tus pestañas de la foto
-    menu = {
+    # Mapeo de navegación con TODAS las pestañas de tus fotos
+    menu_map = {
         "Obras": "Obras",
         "Inventario": "Inventario",
         "Reportes": "Reportes",
         "Empleados": "Empleados",
-        "Usuarios": "USUARIOS"
+        "Gastos": "Gastos_Detalle",
+        "Pedidos": "Pedidos",
+        "Planificación": "Planificacion",
+        "Incidencias": "Incidencias",
+        "Agenda": "Agenda",
+        "Gestión Usuarios": "USUARIOS"
     }
     
-    opcion = st.sidebar.radio("Menú Principal", list(menu.keys()))
+    seleccion = st.sidebar.radio("Ir a:", list(menu_map.keys()))
     
     if st.sidebar.button("Cerrar Sesión"):
         st.session_state.autenticado = False
@@ -108,33 +113,40 @@ else:
     if sh:
         try:
             hojas_reales = [h.title for h in sh.worksheets()]
-            objetivo = menu[opcion].upper()
+            objetivo = menu_map[seleccion].upper()
             
-            # Buscar la hoja real que coincida con la opción
-            hoja_a_abrir = next((h for h in hojas_reales if objetivo in h.upper().strip()), None)
+            # Buscador flexible para encontrar la pestaña real
+            hoja_actual = next((h for h in hojas_reales if objetivo in h.upper().strip()), None)
 
-            if hoja_a_abrir:
-                ws = sh.worksheet(hoja_a_abrir)
-                datos = ws.get_all_values()
-                if len(datos) > 0:
-                    df = pd.DataFrame(datos[1:], columns=datos[0])
+            if hoja_actual:
+                ws = sh.worksheet(hoja_actual)
+                datos_raw = ws.get_all_values()
+                
+                if len(datos_raw) > 0:
+                    df = pd.DataFrame(datos_raw[1:], columns=datos_raw[0])
                 else:
                     df = pd.DataFrame()
 
-                st.header(f"Sección: {opcion}")
-                
-                # Si es Admin puede editar, si no, solo ver
+                st.header(f"Módulo: {seleccion}")
+
+                # Permisos: Solo ADMIN (como tú en la foto) edita
                 if "ADMIN" in st.session_state.rol:
-                    df_ed = st.data_editor(df, num_rows="dynamic", use_container_width=True, key=f"ed_{opcion}")
+                    st.info("💡 Eres Administrador. Puedes editar y guardar cambios.")
+                    df_editado = st.data_editor(df, num_rows="dynamic", use_container_width=True, key=f"ed_{seleccion}")
+                    
                     if st.button("💾 GUARDAR CAMBIOS"):
-                        ws.clear()
-                        ws.update('A1', [df_ed.columns.tolist()] + df_ed.fillna("").values.tolist())
-                        st.success("¡Datos actualizados!")
-                        time.sleep(1)
-                        st.rerun()
+                        with st.spinner("Guardando..."):
+                            ws.clear()
+                            final_data = [df_editado.columns.tolist()] + df_editado.fillna("").values.tolist()
+                            ws.update('A1', final_data)
+                            st.success("¡Datos guardados!")
+                            time.sleep(1)
+                            st.rerun()
                 else:
+                    st.warning("Vista de Solo Lectura.")
                     st.dataframe(df, use_container_width=True)
             else:
-                st.error(f"Pestaña '{objetivo}' no encontrada en el Excel.")
+                st.error(f"Pestaña '{menu_map[seleccion]}' no encontrada en este archivo.")
+        
         except Exception as e:
-            st.error(f"Error al cargar datos: {e}")
+            st.error(f"Error: {e}")
