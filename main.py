@@ -1,114 +1,119 @@
 import streamlit as st
-import pdfplumber
-import plotly.graph_objects as go
 import pandas as pd
 import time
+from datetime import datetime
 
-# --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="Maxtiva ERP - Sistema Integral", layout="wide", page_icon="🏗️")
+# --- CONFIGURACIÓN ---
+st.set_page_config(page_title="Maxtiva ERP Full", layout="wide", page_icon="🏗️")
 
-# --- ESTILOS PERSONALIZADOS ---
-st.markdown("""
-    <style>
-    .stApp { background-color: #f8f9fa; }
-    [data-testid="stSidebar"] { background-color: #1e3d59; color: white; }
-    .stMetric { background-color: white; border: 1px solid #e0e0e0; padding: 15px; border-radius: 8px; }
-    </style>
-""", unsafe_allow_html=True)
+# --- PERSISTENCIA DE DATOS (Session State) ---
+def init_data():
+    if "db_empleados" not in st.session_state:
+        st.session_state.db_empleados = pd.DataFrame([
+            {"ID": 1, "Nombre": "Juan Pérez", "Cargo": "Oficial 1ª", "Salario/h": 25.0}
+        ])
+    if "db_obras" not in st.session_state:
+        st.session_state.db_obras = pd.DataFrame([
+            {"ID": 1, "Nombre": "Reforma CETA", "Presupuesto": 12500.0, "Estado": "Activa"}
+        ])
+    if "db_jornadas" not in st.session_state:
+        st.session_state.db_jornadas = pd.DataFrame(columns=["ID", "Fecha", "Empleado", "Obra", "Horas"])
 
-# --- INICIALIZACIÓN DE VARIABLES DE ESTADO ---
-if "audit_result" not in st.session_state:
-    st.session_state.audit_result = {"extra": 0.0, "puntos": 0}
+init_data()
 
-# --- LÓGICA DEL POP-UP (UNIMATCH) ---
-@st.dialog("🔍 UniMatch: Auditoría de Planos")
-def modal_unimatch():
-    st.write("Sincroniza la ejecución real (CETA) contra el proyecto (ING).")
-    c1, c2 = st.columns(2)
-    f_ing = c1.file_uploader("Proyecto ING", type="pdf", key="u_ing")
-    f_ceta = c2.file_uploader("Ejecución CETA", type="pdf", key="u_ceta")
+# --- FUNCIONES DE GESTIÓN (CRUD) ---
+def borrar_registro(df_name, id_reg):
+    st.session_state[df_name] = st.session_state[df_name][st.session_state[df_name]["ID"] != id_reg]
+    st.rerun()
 
-    if f_ing and f_ceta:
-        with st.spinner("Analizando esquemas..."):
-            time.sleep(1.5)
-            # Simulación basada en tus archivos reales
-            dif = 48 
-            coste = dif * 75.0
-        
-        st.metric("Desviación Detectada", f"+{dif} circuitos", f"{coste:,.2f} €")
-        
-        if st.button("📥 Cargar Adicionales al ERP"):
-            st.session_state.audit_result = {"extra": coste, "puntos": dif}
-            st.rerun()
-
-# --- COMPONENTES DEL ERP ---
-
-def modulo_dashboard():
-    st.title("🏗️ Dashboard de Gestión de Obra")
+# --- MÓDULO: GESTIÓN DE OBRAS ---
+def modulo_obras():
+    st.title("🏗️ Gestión de Obras")
     
-    # Métricas Principales
-    base_obra = 12500.00
-    extra_obra = st.session_state.audit_result["extra"]
-    
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Presupuesto Base", f"{base_obra:,.2f} €")
-    c2.metric("Adicionales Detectados", f"{extra_obra:,.2f} €", delta=f"{st.session_state.audit_result['puntos']} pts")
-    c3.metric("Total Proyecto", f"{base_obra + extra_obra:,.2f} €")
-    c4.metric("Margen Estimado", "22%", "2.5%")
+    with st.expander("➕ Registrar Nueva Obra"):
+        with st.form("nueva_obra"):
+            nom = st.text_input("Nombre de la Obra")
+            pre = st.number_input("Presupuesto Inicial (€)", min_value=0.0)
+            if st.form_submit_button("Crear Obra"):
+                new_id = st.session_state.db_obras["ID"].max() + 1 if not st.session_state.db_obras.empty else 1
+                new_row = {"ID": new_id, "Nombre": nom, "Presupuesto": pre, "Estado": "Activa"}
+                st.session_state.db_obras = pd.concat([st.session_state.db_obras, pd.DataFrame([new_row])], ignore_index=True)
+                st.success("Obra registrada")
+                st.rerun()
 
-    st.divider()
-    
-    col_t, col_g = st.columns([2, 1])
-    with col_t:
-        st.subheader("📋 Partidas del Proyecto")
-        data = {
-            "Partida": ["Acometida General", "Cuadro Socorro BT", "Ampliaciones Detectadas (IA)"],
-            "Estado": ["Finalizado", "En Proceso", "Pendiente" if extra_obra > 0 else "N/A"],
-            "Importe": [8500, 4000, extra_obra]
-        }
-        st.table(pd.DataFrame(data))
-    
-    with col_g:
-        st.subheader("📊 Distribución Costes")
-        fig = go.Figure(data=[go.Pie(labels=['Base', 'Adicionales'], values=[base_obra, extra_obra], hole=.3)])
-        st.plotly_chart(fig, use_container_width=True)
+    st.subheader("Listado de Proyectos")
+    for i, row in st.session_state.db_obras.iterrows():
+        c1, c2, c3, c4 = st.columns([3, 2, 1, 1])
+        c1.write(f"**{row['Nombre']}**")
+        c2.write(f"{row['Presupuesto']:,.2f} €")
+        if c3.button("✏️ Edit", key=f"ed_ob_{row['ID']}"):
+            st.info("Función de edición rápida: cambia el presupuesto en el código o base de datos.")
+        if c4.button("🗑️", key=f"del_ob_{row['ID']}"):
+            borrar_registro("db_obras", row["ID"])
 
-def modulo_facturacion():
-    st.title("💰 Facturación y Cobros")
-    st.write("Gestión de certificaciones y facturas emitidas.")
-    df_fac = pd.DataFrame({
-        "Nº Factura": ["FAC-001", "FAC-002"],
-        "Concepto": ["Entrega Inicial", "Certificación Mes 1"],
-        "Importe": ["3.500 €", "4.000 €"],
-        "Estado": ["Cobrado", "Pendiente"]
-    })
-    st.dataframe(df_fac, use_container_width=True)
-
+# --- MÓDULO: GESTIÓN DE PERSONAL ---
 def modulo_personal():
     st.title("👥 Gestión de Personal")
-    st.write("Control de operarios y horas asignadas a la obra.")
-    st.info("Operarios activos: 4 | Total horas mes: 160h")
+    
+    tab1, tab2 = st.tabs(["Empleados", "Jornadas / Horas"])
+    
+    with tab1:
+        with st.expander("➕ Alta de Empleado"):
+            with st.form("nuevo_emp"):
+                nom = st.text_input("Nombre Completo")
+                car = st.selectbox("Cargo", ["Oficial 1ª", "Oficial 2ª", "Peón", "Ingeniero"])
+                sal = st.number_input("Coste Hora (€)", min_value=0.0)
+                if st.form_submit_button("Guardar"):
+                    new_id = st.session_state.db_empleados["ID"].max() + 1 if not st.session_state.db_empleados.empty else 1
+                    new_row = {"ID": new_id, "Nombre": nom, "Cargo": car, "Salario/h": sal}
+                    st.session_state.db_empleados = pd.concat([st.session_state.db_empleados, pd.DataFrame([new_row])], ignore_index=True)
+                    st.rerun()
+        
+        st.dataframe(st.session_state.db_empleados, use_container_width=True)
+        id_del = st.number_input("ID a eliminar", min_value=1, step=1, key="del_emp_id")
+        if st.button("Eliminar Empleado Seleccionado"):
+            borrar_registro("db_empleados", id_del)
 
-# --- NAVEGACIÓN Y ESTRUCTURA PRINCIPAL ---
+    with tab2:
+        st.subheader("Registro de Jornadas")
+        with st.form("registro_jornada"):
+            c1, c2, c3 = st.columns(3)
+            f_emp = c1.selectbox("Empleado", st.session_state.db_empleados["Nombre"])
+            f_obr = c2.selectbox("Obra", st.session_state.db_obras["Nombre"])
+            f_hor = c3.number_input("Horas", min_value=1)
+            if st.form_submit_button("Registrar Horas"):
+                new_id = st.session_state.db_jornadas["ID"].max() + 1 if not st.session_state.db_jornadas.empty else 1
+                new_row = {"ID": new_id, "Fecha": datetime.now().strftime("%d/%m/%Y"), "Empleado": f_emp, "Obra": f_obr, "Horas": f_hor}
+                st.session_state.db_jornadas = pd.concat([st.session_state.db_jornadas, pd.DataFrame([new_row])], ignore_index=True)
+                st.rerun()
+        st.table(st.session_state.db_jornadas)
 
+# --- DASHBOARD PRINCIPAL ---
+def modulo_dashboard():
+    st.title("📊 Dashboard Maxtiva")
+    total_pre = st.session_state.db_obras["Presupuesto"].sum()
+    total_emp = len(st.session_state.db_empleados)
+    total_hrs = st.session_state.db_jornadas["Horas"].sum()
+    
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Cartera de Obras", f"{total_pre:,.2f} €")
+    c2.metric("Personal Activo", total_emp)
+    c3.metric("Total Horas Reportadas", f"{total_hrs} h")
+    
+    st.divider()
+    st.subheader("Resumen por Proyecto")
+    st.bar_chart(st.session_state.db_obras.set_index("Nombre")["Presupuesto"])
+
+# --- NAVEGACIÓN ---
 def main():
-    # Menú Lateral
-    with st.sidebar:
-        st.title("Maxtiva ERP")
-        st.markdown("---")
-        # Selección de módulos
-        menu = st.radio("Menú Principal", ["🏠 Dashboard", "💰 Facturación", "👥 Personal"])
-        st.markdown("---")
-        st.write("🛠️ **Herramientas Avanzadas**")
-        if st.button("🔍 Auditoría UniMatch", use_container_width=True):
-            modal_unimatch()
-
-    # Lógica de cambio de módulos
-    if menu == "🏠 Dashboard":
+    st.sidebar.title("Maxtiva ERP PRO")
+    menu = st.sidebar.radio("Menú Principal", ["Dashboard", "Obras", "Personal"])
+    
+    if menu == "Dashboard":
         modulo_dashboard()
-    elif menu == "💰 Facturación":
-        modulo_facturacion()
-    elif menu == "👥 Personal":
+    elif menu == "Obras":
+        modulo_obras()
+    elif menu == "Personal":
         modulo_personal()
 
 if __name__ == "__main__":
