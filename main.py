@@ -9,7 +9,7 @@ import re
 import time
 
 # --- 1. CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="MAXTIVA ERP - INTELIGENTE", layout="wide", page_icon="🏢")
+st.set_page_config(page_title="MAXTIVA ERP - SISTEMA INTELIGENTE", layout="wide", page_icon="🏢")
 
 # --- 2. FUNCIONES DE CONEXIÓN ---
 def conectar_google():
@@ -51,26 +51,31 @@ with st.sidebar:
         "📦 Extractor PDF"
     ])
     st.divider()
-    if st.button("🔄 Refrescar Listas"):
+    if st.button("🔄 Actualizar Desplegables"):
         st.cache_data.clear()
         st.rerun()
 
-# --- 4. CARGA DE LISTAS PARA DESPLEGABLES ---
-# Obtenemos los nombres de obras y empleados para los menús
+# --- 4. CARGA CRÍTICA DE LISTAS PARA DESPLEGABLES ---
 lista_obras = []
 lista_empleados = []
 
+# Cargar Obras
 ws_o_list = obtener_pestaña("Obras")
 if ws_o_list:
-    df_o_list = pd.DataFrame(ws_o_list.get_all_records())
-    if not df_o_list.empty and "NOMBRE" in df_o_list.columns:
-        lista_obras = df_o_list["NOMBRE"].unique().tolist()
+    data_o = ws_o_list.get_all_records()
+    if data_o:
+        df_temp_o = pd.DataFrame(data_o)
+        if "NOMBRE" in df_temp_o.columns:
+            lista_obras = [str(x) for x in df_temp_o["NOMBRE"].unique() if x]
 
+# Cargar Empleados
 ws_e_list = obtener_pestaña("Empleados")
 if ws_e_list:
-    df_e_list = pd.DataFrame(ws_e_list.get_all_records())
-    if not df_e_list.empty and "NOMBRE" in df_e_list.columns:
-        lista_empleados = df_e_list["NOMBRE"].unique().tolist()
+    data_e = ws_e_list.get_all_records()
+    if data_e:
+        df_temp_e = pd.DataFrame(data_e)
+        if "NOMBRE" in df_temp_e.columns:
+            lista_empleados = [str(x) for x in df_temp_e["NOMBRE"].unique() if x]
 
 # --- 5. LÓGICA DE MÓDULOS ---
 
@@ -87,7 +92,8 @@ if menu in ["🏗️ Gestión de Obras", "👥 Empleados", "⏱️ Control de Ho
     ws = obtener_pestaña(target)
     if ws:
         try:
-            df_actual = pd.DataFrame(ws.get_all_records())
+            raw = ws.get_all_records()
+            df_actual = pd.DataFrame(raw)
         except:
             df_actual = pd.DataFrame()
 
@@ -101,30 +107,31 @@ if menu in ["🏗️ Gestión de Obras", "👥 Empleados", "⏱️ Control de Ho
             }
             df_actual = pd.DataFrame(columns=cols.get(target, ["Dato"]))
 
-        # --- CONFIGURACIÓN DE COLUMNAS (DESPLEGABLES) ---
+        # --- CONFIGURACIÓN DE DESPLEGABLES ---
         config_columnas = {}
         
-        if target == "Horas":
-            # Cálculo automático de estimadas
-            df_actual["DÍAS DURACIÓN OBRA"] = pd.to_numeric(df_actual["DÍAS DURACIÓN OBRA"], errors='coerce').fillna(0)
-            df_actual["HORAS ESTIMADAS"] = df_actual["DÍAS DURACIÓN OBRA"] * 10
-            
-            config_columnas = {
-                "EMPLEADO": st.column_config.SelectboxColumn("EMPLEADO", options=lista_empleados),
-                "OBRA": st.column_config.SelectboxColumn("OBRA", options=lista_obras),
-                "HORAS ESTIMADAS": st.column_config.NumberColumn("HORAS ESTIMADAS", disabled=True)
-            }
-        
-        elif target == "Gastos":
-            config_columnas = {
-                "OBRA": st.column_config.SelectboxColumn("OBRA", options=lista_obras),
-                "FECHA": st.column_config.DateColumn("FECHA")
-            }
+        # Desplegable para Obras en los módulos correspondientes
+        if target in ["Horas", "Gastos"]:
+            if lista_obras:
+                config_columnas["OBRA"] = st.column_config.SelectboxColumn("OBRA", options=lista_obras, required=True)
+            else:
+                st.warning("⚠️ No hay Obras registradas. El desplegable de OBRA no aparecerá hasta que añadas una en 'Gestión de Obras'.")
 
-        elif target == "Obras":
-            config_columnas = {
-                "ESTADO": st.column_config.SelectboxColumn("ESTADO", options=["Activa", "Finalizada", "Pendiente"])
-            }
+        # Desplegable para Empleados en Horas
+        if target == "Horas":
+            if lista_empleados:
+                config_columnas["EMPLEADO"] = st.column_config.SelectboxColumn("EMPLEADO", options=lista_empleados, required=True)
+            else:
+                st.warning("⚠️ No hay Empleados registrados.")
+            
+            # Cálculo de horas estimadas (10h por día)
+            if "DÍAS DURACIÓN OBRA" in df_actual.columns:
+                df_actual["DÍAS DURACIÓN OBRA"] = pd.to_numeric(df_actual["DÍAS DURACIÓN OBRA"], errors='coerce').fillna(0)
+                df_actual["HORAS ESTIMADAS"] = df_actual["DÍAS DURACIÓN OBRA"] * 10
+            config_columnas["HORAS ESTIMADAS"] = st.column_config.NumberColumn("HORAS ESTIMADAS", disabled=True)
+
+        if target == "Obras":
+            config_columnas["ESTADO"] = st.column_config.SelectboxColumn("ESTADO", options=["Activa", "Finalizada", "Pendiente"])
 
         # --- EDITOR ---
         df_editado = st.data_editor(
@@ -135,20 +142,28 @@ if menu in ["🏗️ Gestión de Obras", "👥 Empleados", "⏱️ Control de Ho
             key=f"ed_{target}"
         )
         
-        if st.button(f"💾 GUARDAR CAMBIOS EN {target.upper()}"):
+        if st.button(f"💾 GUARDAR CAMBIOS EN {target.upper()}", type="primary"):
             try:
-                # Recalcular horas estimadas antes de guardar
-                if target == "Horas":
+                # Recalcular horas estimadas antes de guardar si es Horas
+                if target == "Horas" and "DÍAS DURACIÓN OBRA" in df_editado.columns:
                     df_editado["HORAS ESTIMADAS"] = pd.to_numeric(df_editado["DÍAS DURACIÓN OBRA"], errors='coerce').fillna(0) * 10
                 
                 df_final = df_editado.fillna("").astype(str)
                 datos = [df_final.columns.values.tolist()] + df_final.values.tolist()
                 ws.clear()
                 ws.update('A1', datos)
-                st.success("✅ Sincronizado.")
+                st.success("✅ Datos guardados correctamente.")
                 time.sleep(1)
                 st.rerun()
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.error(f"Error al guardar: {e}")
+    else:
+        st.error(f"Pestaña '{target}' no encontrada.")
 
-# (Resto de módulos: Dashboard y PDF se mantienen igual)
+# (El Dashboard y el Extractor PDF se mantienen igual)
+elif menu == "📊 Dashboard":
+    st.title("📊 Resumen")
+    st.info("Selecciona un módulo para editar.")
+elif menu == "📦 Extractor PDF":
+    st.title("📦 Extractor")
+    st.write("Sube un archivo para analizar.")
