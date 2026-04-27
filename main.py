@@ -10,7 +10,7 @@ import time
 from datetime import datetime
 
 # --- 1. CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="MAXTIVA ERP - SISTEMA INTELIGENTE", layout="wide", page_icon="🏢")
+st.set_page_config(page_title="MAXTIVA ERP - CÁLCULO 8H", layout="wide", page_icon="🏢")
 
 # --- 2. FUNCIONES DE CONEXIÓN ---
 def conectar_google():
@@ -56,11 +56,10 @@ with st.sidebar:
         st.cache_data.clear()
         st.rerun()
 
-# --- 4. CARGA DE LISTAS PARA DESPLEGABLES ---
+# --- 4. CARGA DE LISTAS (DESPLEGABLES) ---
 lista_obras = []
 lista_empleados = []
 
-# Cargar Obras
 ws_o_list = obtener_pestaña("Obras")
 if ws_o_list:
     data_o = ws_o_list.get_all_records()
@@ -69,7 +68,6 @@ if ws_o_list:
         if "NOMBRE" in df_temp_o.columns:
             lista_obras = [str(x) for x in df_temp_o["NOMBRE"].unique() if x]
 
-# Cargar Empleados
 ws_e_list = obtener_pestaña("Empleados")
 if ws_e_list:
     data_e = ws_e_list.get_all_records()
@@ -98,74 +96,66 @@ if menu in ["🏗️ Gestión de Obras", "👥 Empleados", "⏱️ Control de Ho
         except:
             df_actual = pd.DataFrame()
 
-        # Estructura base si está vacía
         if df_actual.empty:
             cols = {
                 "Obras": ["ID", "CLIENTE", "NOMBRE", "PRESUPUESTO", "ESTADO"],
                 "Empleados": ["NOMBRE", "DNI", "PUESTO", "TELÉFONO"],
-                "Horas": ["FECHA", "EMPLEADO", "OBRA", "HORAS REALIZADAS", "DÍAS DURACIÓN OBRA", "HORAS ESTIMADAS"],
+                "Horas": ["FECHA", "EMPLEADO", "OBRA", "HORAS REALIZADAS", "DÍAS TRABAJADOS", "HORAS ESTIMADAS"],
                 "Gastos": ["FECHA", "CONCEPTO", "IMPORTE", "OBRA"]
             }
             df_actual = pd.DataFrame(columns=cols.get(target, ["Dato"]))
 
-        # --- CONFIGURACIÓN DE COLUMNAS ---
         config_columnas = {}
         
-        if target in ["Horas", "Gastos"]:
-            config_columnas["FECHA"] = st.column_config.TextColumn("FECHA", help="Deja vacío para usar la fecha de hoy")
-            if lista_obras:
-                config_columnas["OBRA"] = st.column_config.SelectboxColumn("OBRA", options=lista_obras)
-        
+        # --- LÓGICA ESPECÍFICA DE HORAS (8h/día) ---
         if target == "Horas":
-            if lista_empleados:
-                config_columnas["EMPLEADO"] = st.column_config.SelectboxColumn("EMPLEADO", options=lista_empleados)
+            # Si el usuario pone los días, calculamos Horas Estimadas (Días * 8h)
+            if "DÍAS TRABAJADOS" in df_actual.columns:
+                df_actual["DÍAS TRABAJADOS"] = pd.to_numeric(df_actual["DÍAS TRABAJADOS"], errors='coerce').fillna(0)
+                df_actual["HORAS ESTIMADAS"] = df_actual["DÍAS TRABAJADOS"] * 8
             
-            # Auto-cálculo visual de estimadas
-            if "DÍAS DURACIÓN OBRA" in df_actual.columns:
-                df_actual["DÍAS DURACIÓN OBRA"] = pd.to_numeric(df_actual["DÍAS DURACIÓN OBRA"], errors='coerce').fillna(0)
-                df_actual["HORAS ESTIMADAS"] = df_actual["DÍAS DURACIÓN OBRA"] * 10
-            config_columnas["HORAS ESTIMADAS"] = st.column_config.NumberColumn("HORAS ESTIMADAS", disabled=True)
-
-        if target == "Obras":
-            config_columnas["ESTADO"] = st.column_config.SelectboxColumn("ESTADO", options=["Activa", "Finalizada", "Pendiente"])
+            config_columnas = {
+                "FECHA": st.column_config.TextColumn("FECHA (Vacío = Hoy)"),
+                "EMPLEADO": st.column_config.SelectboxColumn("EMPLEADO", options=lista_empleados),
+                "OBRA": st.column_config.SelectboxColumn("OBRA", options=lista_obras),
+                "HORAS ESTIMADAS": st.column_config.NumberColumn("HORAS ESTIMADAS", disabled=True, help="Cálculo automático: Días * 8h")
+            }
+        
+        elif target == "Gastos":
+            config_columnas = {
+                "FECHA": st.column_config.TextColumn("FECHA (Vacío = Hoy)"),
+                "OBRA": st.column_config.SelectboxColumn("OBRA", options=lista_obras)
+            }
 
         # --- EDITOR ---
-        df_editado = st.data_editor(
-            df_actual, 
-            use_container_width=True, 
-            num_rows="dynamic",
-            column_config=config_columnas,
-            key=f"ed_{target}"
-        )
+        df_editado = st.data_editor(df_actual, use_container_width=True, num_rows="dynamic", column_config=config_columnas, key=f"ed_{target}")
         
-        # --- BOTÓN GUARDAR CON LÓGICA DE FECHA AUTO ---
-        if st.button(f"💾 GUARDAR CAMBIOS EN {target.upper()}", type="primary"):
+        # --- GUARDADO ---
+        if st.button(f"💾 GUARDAR {target.upper()}", type="primary"):
             try:
-                # 1. Lógica de Fecha Automática si está vacía
+                # Fecha automática
                 hoy = datetime.now().strftime("%d/%m/%Y")
                 if "FECHA" in df_editado.columns:
-                    # Rellenamos solo las celdas vacías o con espacios con la fecha de hoy
                     df_editado["FECHA"] = df_editado["FECHA"].apply(lambda x: hoy if str(x).strip() == "" else x)
 
-                # 2. Recalcular horas estimadas
-                if target == "Horas" and "DÍAS DURACIÓN OBRA" in df_editado.columns:
-                    df_editado["HORAS ESTIMADAS"] = pd.to_numeric(df_editado["DÍAS DURACIÓN OBRA"], errors='coerce').fillna(0) * 10
+                # Recalcular 8h antes de subir
+                if target == "Horas" and "DÍAS TRABAJADOS" in df_editado.columns:
+                    df_editado["HORAS ESTIMADAS"] = pd.to_numeric(df_editado["DÍAS TRABAJADOS"], errors='coerce').fillna(0) * 8
                 
-                # 3. Subir a Google
                 df_final = df_editado.fillna("").astype(str)
                 datos = [df_final.columns.values.tolist()] + df_final.values.tolist()
                 ws.clear()
                 ws.update('A1', datos)
-                
-                st.success(f"✅ Guardado. Las fechas vacías se han registrado como {hoy}")
+                st.success("✅ ¡Datos guardados y horas calculadas (Base 8h)! ")
                 time.sleep(1)
                 st.rerun()
             except Exception as e:
                 st.error(f"Error: {e}")
 
+# Módulos Dashboard y PDF simplificados para el ejemplo
 elif menu == "📊 Dashboard":
     st.title("📊 Resumen")
-    st.info("Módulos de gestión listos.")
+    st.info("Cálculo actual: 1 día = 8 horas laborables.")
 elif menu == "📦 Extractor PDF":
     st.title("📦 Extractor")
-    st.write("Sube el PDF para procesar.")
+    st.write("Sube tu PDF.")
