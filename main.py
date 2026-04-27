@@ -3,10 +3,10 @@ import pandas as pd
 import pdfplumber
 import re
 
-# --- CONFIGURACIÓN ---
-st.set_page_config(page_title="MA XTIVA ERP", layout="wide")
+# --- CONFIGURACIÓN DE PÁGINA ---
+st.set_page_config(page_title="MA XTIVA ERP", layout="wide", page_icon="🏗️")
 
-# Estilos Maxtiva
+# Estilos visuales
 st.markdown("""
     <style>
     [data-testid="stSidebar"] { background-color: #FFD700; }
@@ -14,13 +14,14 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- FUNCIÓN DE CARGA SEGURA ---
-def cargar_datos():
+# --- FUNCIÓN DE CARGA POR CSV (MÉTODO ROBUSTO) ---
+def cargar_datos_maxtiva():
     try:
-        # Cargamos directamente desde la URL de exportación CSV definida en Secrets
+        # Leemos las URLs desde el diccionario 'gsheets' en Secrets
         url_erp = st.secrets["gsheets"]["erp"]
         url_gastos = st.secrets["gsheets"]["gastos"]
         
+        # Lectura directa
         df_o = pd.read_csv(url_erp)
         df_g = pd.read_csv(url_gastos)
         
@@ -29,48 +30,57 @@ def cargar_datos():
         st.error(f"Error de lectura: {e}")
         return pd.DataFrame(), pd.DataFrame(), False
 
-# --- INICIO DE APP ---
-df_obras, df_gastos, conectado = cargar_datos()
+# --- EJECUCIÓN ---
+df_obras, df_gastos, conectado = cargar_datos_maxtiva()
 
+# --- INTERFAZ ---
 st.sidebar.title("🏢 GRUPO MAXTIVA")
 
 if conectado:
-    st.sidebar.success("✅ Conexión Establecida")
+    st.sidebar.success("✅ Conectado a Google Drive")
     menu = st.sidebar.radio("MENÚ", ["📊 Dashboard", "🏗️ Gestión Obras", "📦 Pedidos PDF"])
 
     if menu == "📊 Dashboard":
-        st.title("Resumen Ejecutivo Maxtiva")
+        st.title("📊 Panel de Control Maxtiva")
         
-        # Métricas
-        c1, c2, c3 = st.columns(3)
-        # Ajustamos los nombres de columnas según tu imagen de Excel
+        col1, col2, col3 = st.columns(3)
+        
+        # Nombres de columnas basados en tu imagen de Excel
+        # Asegúrate de que en el Excel la columna se llame exactamente PRESUPUESTO e Importe
         ingresos = df_obras['PRESUPUESTO'].sum() if 'PRESUPUESTO' in df_obras.columns else 0
         gastos = df_gastos['Importe'].sum() if 'Importe' in df_gastos.columns else 0
         
-        c1.metric("Ingresos (Obras)", f"{ingresos:,.2f} €")
-        c2.metric("Gastos Totales", f"{gastos:,.2f} €")
-        c3.metric("Diferencia", f"{ingresos - gastos:,.2f} €")
+        col1.metric("Presupuesto Total", f"{ingresos:,.2f} €")
+        col2.metric("Gastos Acumulados", f"{gastos:,.2f} €")
+        col3.metric("Margen Neto", f"{ingresos - gastos:,.2f} €")
         
         st.divider()
-        st.subheader("Listado de Obras (Desde ERP MAXTIVA)")
+        st.subheader("Obras en Sistema")
         st.dataframe(df_obras, use_container_width=True)
 
     elif menu == "🏗️ Gestión Obras":
-        st.title("Gestión de Proyectos")
-        st.dataframe(df_obras)
-        st.info("Para actualizar datos, modifica tu Google Sheets y refresca esta página.")
+        st.title("🏗️ Gestión de Proyectos")
+        st.write("Datos sincronizados con ERP MAXTIVA:")
+        st.dataframe(df_obras, use_container_width=True)
+        st.info("💡 Para actualizar: edita tu Excel y pulsa el botón 'Actualizar Datos'.")
 
     elif menu == "📦 Pedidos PDF":
-        st.title("Extractor de Pedidos")
-        archivo = st.file_uploader("Subir PDF", type="pdf")
-        if archivo:
-            with pdfplumber.open(archivo) as pdf:
-                texto = "\n".join([p.extract_text() for p in pdf.pages])
-            st.success("Análisis completado")
-            st.text_area("Texto detectado:", texto[:800])
+        st.title("📦 Extractor de Datos PDF")
+        pdf_file = st.file_uploader("Sube el pedido/factura", type="pdf")
+        if pdf_file:
+            with pdfplumber.open(pdf_file) as pdf:
+                full_text = "\n".join([page.extract_text() for page in pdf.pages])
+            
+            # Buscar importes
+            matches = re.findall(r"(\d+[\.,]\d{2})", full_text)
+            if matches:
+                st.success(f"Importe sugerido: {matches[-1]} €")
+            
+            st.text_area("Texto extraído:", full_text[:1000], height=300)
 
-    if st.sidebar.button("🔄 Refrescar Todo"):
+    if st.sidebar.button("🔄 Actualizar Datos"):
         st.rerun()
+
 else:
-    st.error("❌ Fallo crítico de conexión.")
-    st.info("Asegúrate de que tus Google Sheets estén compartidas como: 'Cualquier persona con el enlace puede leer'.")
+    st.error("❌ Fallo de conexión: No se pudieron leer las hojas.")
+    st.info("REVISA ESTO: \n1. En Google Sheets, ve a 'Compartir' y pon 'Cualquier persona con el enlace'. \n2. Verifica que las URLs en Secrets sean correctas.")
