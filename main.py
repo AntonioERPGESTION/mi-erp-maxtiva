@@ -1,111 +1,69 @@
 import streamlit as st
+from streamlit_gsheets import GSheetsConnection
 import pandas as pd
-import gspread
-from google.oauth2.service_account import Credentials
-import base64
-import json
 import pdfplumber
 import re
-from datetime import datetime
 
-# --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="MA XTIVA ERP", layout="wide", page_icon="🏢")
+# --- CONFIGURACIÓN ---
+st.set_page_config(page_title="MAXTIVA ERP - SISTEMA OK", layout="wide")
 
-# --- CONEXIÓN ULTRA-SEGURA (MÉTODO BASE64) ---
-def get_gsheet_client():
-    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    try:
-        if "gcp_service_account" in st.secrets:
-            # Decodificamos la caja sellada
-            encoded_json = st.secrets["gcp_service_account"]["json_base64"]
-            decoded_json = base64.b64decode(encoded_json).decode("utf-8")
-            info = json.loads(decoded_json)
-            
-            creds = Credentials.from_service_account_info(info, scopes=scope)
-            return gspread.authorize(creds)
-    except Exception as e:
-        st.error(f"Error de validación: {e}")
-    return None
-
+# --- LÓGICA DE CARGA ---
 def load_data():
-    client = get_gsheet_client()
-    if client:
-        try:
-            # Archivos en Drive
-            sh_o = client.open("ERP MAXTIVA").worksheet("Obras")
-            sh_g = client.open("gastos MAXTIVA").get_worksheet(0)
-            return pd.DataFrame(sh_o.get_all_records()), pd.DataFrame(sh_g.get_all_records()), True
-        except Exception as e:
-            st.error(f"Archivos no encontrados o sin permiso: {e}")
-            st.info("💡 Asegúrate de compartir los Excel con el email de tu JSON como 'Editor'.")
-    return pd.DataFrame(), pd.DataFrame(), False
-
-# --- SESIÓN ---
-if "db_o" not in st.session_state:
-    st.session_state.db_o, st.session_state.db_g, st.session_state.ready = load_data()
-
-# --- MÓDULOS DEL SISTEMA ---
-
-def modulo_dashboard():
-    st.title("📊 Dashboard Ejecutivo")
-    o, g = st.session_state.db_o, st.session_state.db_g
-    col1, col2, col3 = st.columns(3)
-    
-    ingresos = o['PRESUPUESTO'].sum() if not o.empty else 0
-    gastos = g['Importe'].sum() if not g.empty else 0
-    
-    col1.metric("Ingresos Totales", f"{ingresos:,.2f} €")
-    col2.metric("Gastos Totales", f"{gastos:,.2f} €")
-    col3.metric("Beneficio", f"{ingresos - gastos:,.2f} €")
-    
-    st.divider()
-    st.subheader("Listado de Obras")
-    st.dataframe(o, use_container_width=True)
-
-def modulo_obras():
-    st.title("🏗️ Gestión de Obras")
-    with st.form("nueva_obra"):
-        c = st.columns(2)
-        id_o = c[0].text_input("ID Proyecto")
-        cli = c[1].text_input("Cliente")
-        nom = st.text_input("Nombre de Obra")
-        pre = st.number_input("Presupuesto (€)", min_value=0.0)
-        if st.form_submit_button("Sincronizar con Drive"):
-            client = get_gsheet_client()
-            sh = client.open("ERP MAXTIVA").worksheet("Obras")
-            sh.append_row([id_o, cli, pre, "Activa", nom, ""])
-            st.success("Obra guardada correctamente.")
-            st.session_state.db_o, st.session_state.db_g, st.session_state.ready = load_data()
-
-def modulo_pdf():
-    st.title("📦 Extractor de Pedidos (IA)")
-    pdf_file = st.file_uploader("Sube el PDF del proveedor", type="pdf")
-    if pdf_file:
-        with pdfplumber.open(pdf_file) as pdf:
-            text = "\n".join([page.extract_text() for page in pdf.pages])
-        importes = re.findall(r"(\d+[\.,]\d{2})", text)
-        if importes:
-            st.success(f"Importe detectado: {importes[-1]} €")
-        else:
-            st.warning("No se encontró el importe. Revisa el documento.")
-
-# --- NAVEGACIÓN ---
-def main():
-    st.sidebar.title("🏢 GRUPO MAXTIVA")
-    
-    if not st.session_state.ready:
-        st.sidebar.error("❌ ERROR DE CONEXIÓN")
-        st.error("El sistema no puede validar la llave. Realiza el Paso 1 (Base64).")
-        if st.button("🔄 Reintentar"):
-            st.session_state.db_o, st.session_state.db_g, st.session_state.ready = load_data()
-            st.rerun()
-    else:
-        st.sidebar.success("✅ SISTEMA ONLINE")
-        menu = st.sidebar.radio("MENÚ", ["Dashboard", "Gestión Obras", "Pedidos PDF"])
+    try:
+        # Conexión 1: ERP (ID: 1dJWM...HQ3BM)
+        conn_erp = st.connection("gsheets_erp", type=GSheetsConnection)
+        df_o = conn_erp.read(worksheet="Obras") # Asegúrate que la pestaña se llame Obras
         
-        if menu == "Dashboard": modulo_dashboard()
-        elif menu == "Gestión Obras": modulo_obras()
-        elif menu == "Pedidos PDF": modulo_pdf()
+        # Conexión 2: Gastos (ID: 1u85J...V5ybg)
+        conn_g = st.connection("gsheets_gastos", type=GSheetsConnection)
+        df_g = conn_g.read() # Lee la primera pestaña
+        
+        return df_o, df_g, True
+    except Exception as e:
+        st.sidebar.error(f"Error de conexión: {e}")
+        return pd.DataFrame(), pd.DataFrame(), False
 
-if __name__ == "__main__":
-    main()
+# --- PROCESO ---
+df_o, df_g, conectado = load_data()
+
+# --- INTERFAZ ---
+st.sidebar.title("🏢 GRUPO MAXTIVA")
+
+if conectado:
+    st.sidebar.success("✅ Conectado a Drive")
+    menu = st.sidebar.radio("MENÚ", ["📊 Dashboard", "🏗️ Gestión Obras", "📦 Pedidos PDF"])
+
+    if menu == "📊 Dashboard":
+        st.title("Panel de Control")
+        c1, c2 = st.columns(2)
+        
+        # Intentamos calcular totales si las columnas existen
+        try:
+            total_presu = df_o['PRESUPUESTO'].sum()
+            total_gastos = df_g['Importe'].sum()
+            c1.metric("Ingresos Totales", f"{total_presu:,.2f} €")
+            c2.metric("Gastos Totales", f"{total_gastos:,.2f} €")
+        except:
+            st.warning("Verifica que las columnas se llamen 'PRESUPUESTO' e 'Importe'.")
+
+        st.write("### Vista de Obras")
+        st.dataframe(df_o, use_container_width=True)
+
+    elif menu == "🏗️ Gestión Obras":
+        st.title("Gestión de Obras")
+        st.dataframe(df_o)
+        st.info("💡 Edita directamente en Google Sheets y pulsa el botón de abajo.")
+
+    elif menu == "📦 Pedidos PDF":
+        st.title("Extractor de Datos")
+        up = st.file_uploader("Subir PDF", type="pdf")
+        if up:
+            with pdfplumber.open(up) as pdf:
+                texto = "\n".join([p.extract_text() for p in pdf.pages])
+            st.text_area("Contenido:", texto[:500])
+
+    if st.sidebar.button("🔄 Refrescar Datos"):
+        st.cache_data.clear()
+        st.rerun()
+else:
+    st.error("⚠️ No se pudo conectar. Revisa que el formato TOML en Secrets sea el correcto.")
