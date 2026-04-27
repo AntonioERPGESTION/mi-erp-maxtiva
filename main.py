@@ -7,10 +7,10 @@ import json
 import pdfplumber
 import re
 
-# --- CONFIGURACIÓN ---
-st.set_page_config(page_title="MA XTIVA ERP - EDICIÓN TOTAL", layout="wide")
+# --- CONFIGURACIÓN DE PÁGINA ---
+st.set_page_config(page_title="MAXTIVA ERP - SISTEMA INTEGRAL", layout="wide", page_icon="🏢")
 
-# --- CONEXIÓN ---
+# --- CONEXIÓN SEGURA ---
 def conectar_google():
     try:
         encoded = st.secrets["claves_gcp"]["json_base64"]
@@ -22,67 +22,112 @@ def conectar_google():
         st.sidebar.error(f"Error de conexión: {e}")
         return None
 
-def obtener_pestaña(nombre_ws):
+def obtener_pestaña(nombre_posible):
     gc = conectar_google()
     if gc:
         try:
             sh = gc.open("ERP MAXTIVA")
-            return sh.worksheet(nombre_ws)
-        except:
+            # Intentamos buscar la hoja. Si falla "Gastos", intentará con "gastos"
+            for sheet in sh.worksheets():
+                if sheet.title.lower() == nombre_posible.lower():
+                    return sheet
+            return None
+        except Exception as e:
             return None
     return None
 
-# --- MENÚ ---
+# --- MENÚ LATERAL (RESTAURADO COMPLETO) ---
 with st.sidebar:
     st.title("🏢 GRUPO MAXTIVA")
-    menu = st.radio("SECCIONES", ["📊 Dashboard", "🏗️ Obras", "👥 Empleados", "⏱️ Horas", "💸 Gastos", "📦 Pedidos PDF"])
+    st.markdown("---")
+    menu = st.selectbox("SELECCIONE MÓDULO", [
+        "📊 Dashboard General",
+        "🏗️ Gestión de Obras",
+        "👥 Gestión de Empleados",
+        "⏱️ Imputación de Horas",
+        "💸 Adjudicación de Gastos",
+        "📦 Pedidos y Facturas PDF"
+    ])
+    st.markdown("---")
+    if st.button("🔄 Sincronizar con Drive"):
+        st.cache_data.clear()
+        st.rerun()
 
-# --- LÓGICA DE EDICIÓN (CRUD) ---
-if menu in ["🏗️ Obras", "👥 Empleados", "⏱️ Horas", "💸 Gastos"]:
-    nombre_pestaña = menu.split()[-1] # Extrae 'Obras', 'Empleados', etc.
-    st.title(f"📝 Edición de {nombre_pestaña}")
+# --- LÓGICA DE MÓDULOS ---
+
+# 1. DASHBOARD
+if menu == "📊 Dashboard General":
+    st.title("📊 Resumen de Operaciones")
+    # Intentamos leer Obras y Gastos para métricas
+    ws_o = obtener_pestaña("Obras")
+    ws_g = obtener_pestaña("Gastos")
     
-    ws = obtener_pestaña(nombre_pestaña)
+    c1, c2, c3 = st.columns(3)
+    if ws_o:
+        df_o = pd.DataFrame(ws_o.get_all_records())
+        ingresos = pd.to_numeric(df_o['PRESUPUESTO'], errors='coerce').sum() if 'PRESUPUESTO' in df_o.columns else 0
+        c1.metric("Ingresos Totales", f"{ingresos:,.2f} €")
+    
+    if ws_g:
+        df_g = pd.DataFrame(ws_g.get_all_records())
+        # Buscamos columna 'IMPORTE' o 'Importe'
+        col_imp = [c for c in df_g.columns if c.lower() == 'importe']
+        gastos = pd.to_numeric(df_g[col_imp[0]], errors='coerce').sum() if col_imp else 0
+        c2.metric("Gastos Totales", f"{gastos:,.2f} €")
+        if ws_o and ws_g:
+            c3.metric("Margen Neto", f"{ingresos - gastos:,.2f} €")
+
+# 2. MÓDULOS EDITABLES (Obras, Empleados, Horas, Gastos)
+elif menu in ["🏗️ Gestión de Obras", "👥 Gestión de Empleados", "⏱️ Imputación de Horas", "💸 Adjudicación de Gastos"]:
+    # Extraer el nombre de la hoja según el menú
+    mapeo = {
+        "🏗️ Gestión de Obras": "Obras",
+        "👥 Gestión de Empleados": "Empleados",
+        "⏱️ Imputación de Horas": "Horas",
+        "💸 Adjudicación de Gastos": "Gastos"
+    }
+    target = mapeo[menu]
+    st.title(f"📝 {menu}")
+    
+    ws = obtener_pestaña(target)
     if ws:
-        # 1. Leer datos
         df_actual = pd.DataFrame(ws.get_all_records())
         
-        st.info("💡 Haz doble clic en una celda para editar. Para borrar, selecciona la fila y pulsa 'Suprimir'.")
+        st.write(f"Editando hoja: **{ws.title}**")
+        st.info("💡 Doble clic para editar celdas. Pulsa el botón inferior para guardar.")
         
-        # 2. EL EDITOR MÁGICO (Aquí es donde se puede editar)
-        # num_rows="dynamic" permite añadir filas nuevas al final de la tabla
-        df_editado = st.data_editor(df_actual, use_container_width=True, num_rows="dynamic", key=f"editor_{nombre_pestaña}")
+        # EDITOR DE DATOS
+        df_editado = st.data_editor(
+            df_actual, 
+            use_container_width=True, 
+            num_rows="dynamic", 
+            key=f"editor_{target}"
+        )
         
-        # 3. BOTÓN DE GUARDADO
-        if st.button(f"💾 Guardar Cambios en {nombre_pestaña}", type="primary"):
+        if st.button(f"💾 Guardar Cambios en {target}", type="primary"):
             try:
-                # Limpiar la hoja y subir el nuevo dataframe editado
                 ws.clear()
+                # Escribir encabezados + datos
                 ws.update([df_editado.columns.values.tolist()] + df_editado.astype(str).values.tolist())
-                st.success("✅ ¡Datos sincronizados con Google Sheets!")
+                st.success(f"✅ ¡Hoja {target} actualizada en Google Drive!")
                 st.balloons()
             except Exception as e:
                 st.error(f"Error al guardar: {e}")
+    else:
+        st.error(f"❌ No se encontró la pestaña '{target}' en el Excel 'ERP MAXTIVA'.")
+        st.info(f"Crea una pestaña llamada exactamente '{target}' en tu Google Sheets para activarla.")
 
-elif menu == "📊 Dashboard":
-    st.title("📊 Resumen de Negocio")
-    # Lectura rápida para métricas
-    ws_o = obtener_pestaña("Obras")
-    ws_g = obtener_pestaña("Gastos")
-    if ws_o and ws_g:
-        df_o = pd.DataFrame(ws_o.get_all_records())
-        df_g = pd.DataFrame(ws_g.get_all_records())
-        c1, c2 = st.columns(2)
-        c1.metric("Total Obras", len(df_o))
-        if 'IMPORTE' in df_g.columns:
-            total_g = pd.to_numeric(df_g['IMPORTE'], errors='coerce').sum()
-            c2.metric("Gastos Totales", f"{total_g:,.2f} €")
-
-elif menu == "📦 Pedidos PDF":
+# 3. PEDIDOS PDF
+elif menu == "📦 Pedidos y Facturas PDF":
     st.title("📦 Extractor de Pedidos")
-    archivo = st.file_uploader("Subir factura/pedido", type="pdf")
+    archivo = st.file_uploader("Subir PDF", type="pdf")
     if archivo:
         with pdfplumber.open(archivo) as pdf:
             texto = "\n".join([p.extract_text() for p in pdf.pages])
-        st.success("Análisis completado")
-        st.text_area("Texto extraído:", texto, height=300)
+        
+        importes = re.findall(r"(\d+[\.,]\d{2})", texto)
+        if importes:
+            st.success(f"💰 Importe detectado: {importes[-1]} €")
+        
+        st.subheader("Texto Extraído")
+        st.text_area("Contenido:", texto, height=400)
