@@ -7,3 +7,6 @@ streamlit
 pdfplumber
 plotly
 pandas
+st-gsheets-connection
+pandas
+pdfplumber
