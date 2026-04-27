@@ -3,3 +3,7 @@ gspread
 oauth2client
 pandas
 plotly
+streamlit
+pdfplumber
+plotly
+pandas
