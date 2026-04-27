@@ -1,5 +1,4 @@
 import streamlit as st
-from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 import pdfplumber
 import re
@@ -15,61 +14,63 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- CONEXIÓN DIRECTA ---
+# --- FUNCIÓN DE CARGA SEGURA ---
 def cargar_datos():
     try:
-        # Conexión 1: ERP MAXTIVA
-        conn_erp = st.connection("gsheets_erp", type=GSheetsConnection)
-        df_o = conn_erp.read(worksheet="Obras", ttl=0)
+        # Cargamos directamente desde la URL de exportación CSV definida en Secrets
+        url_erp = st.secrets["gsheets"]["erp"]
+        url_gastos = st.secrets["gsheets"]["gastos"]
         
-        # Conexión 2: gastos MAXTIVA
-        conn_g = st.connection("gsheets_gastos", type=GSheetsConnection)
-        df_g = conn_g.read(ttl=0) 
+        df_o = pd.read_csv(url_erp)
+        df_g = pd.read_csv(url_gastos)
         
         return df_o, df_g, True
     except Exception as e:
-        st.error(f"Fallo de conexión: {e}")
+        st.error(f"Error de lectura: {e}")
         return pd.DataFrame(), pd.DataFrame(), False
 
+# --- INICIO DE APP ---
 df_obras, df_gastos, conectado = cargar_datos()
 
-# --- INTERFAZ ---
-with st.sidebar:
-    st.title("🏢 GRUPO MAXTIVA")
-    if conectado:
-        st.success("✅ Datos Sincronizados")
-        menu = st.radio("MENÚ", ["📊 Dashboard", "🏗️ Gestión Obras", "📦 Pedidos PDF"])
-    else:
-        st.error("❌ Sin conexión a Drive")
-        menu = None
+st.sidebar.title("🏢 GRUPO MAXTIVA")
 
-if conectado and menu:
+if conectado:
+    st.sidebar.success("✅ Conexión Establecida")
+    menu = st.sidebar.radio("MENÚ", ["📊 Dashboard", "🏗️ Gestión Obras", "📦 Pedidos PDF"])
+
     if menu == "📊 Dashboard":
         st.title("Resumen Ejecutivo Maxtiva")
         
-        # Métricas (Usando nombres exactos de tu imagen)
-        c1, c2 = st.columns(2)
-        total_presu = df_obras['PRESUPUESTO'].sum() if 'PRESUPUESTO' in df_obras.columns else 0
-        c1.metric("Presupuesto en Curso", f"{total_presu:,.2f} €")
+        # Métricas
+        c1, c2, c3 = st.columns(3)
+        # Ajustamos los nombres de columnas según tu imagen de Excel
+        ingresos = df_obras['PRESUPUESTO'].sum() if 'PRESUPUESTO' in df_obras.columns else 0
+        gastos = df_gastos['Importe'].sum() if 'Importe' in df_gastos.columns else 0
+        
+        c1.metric("Ingresos (Obras)", f"{ingresos:,.2f} €")
+        c2.metric("Gastos Totales", f"{gastos:,.2f} €")
+        c3.metric("Diferencia", f"{ingresos - gastos:,.2f} €")
         
         st.divider()
-        st.subheader("Obras Actuales")
-        st.dataframe(df_obras[['ID', 'CLIENTE', 'PRESUPUESTO', 'ESTADO', 'NOMBRE']], use_container_width=True)
+        st.subheader("Listado de Obras (Desde ERP MAXTIVA)")
+        st.dataframe(df_obras, use_container_width=True)
 
     elif menu == "🏗️ Gestión Obras":
         st.title("Gestión de Proyectos")
         st.dataframe(df_obras)
-        st.info("💡 Edita el Excel original para ver cambios aquí.")
+        st.info("Para actualizar datos, modifica tu Google Sheets y refresca esta página.")
 
     elif menu == "📦 Pedidos PDF":
-        st.title("Extractor de Datos")
-        archivo = st.file_uploader("Subir factura PDF", type="pdf")
+        st.title("Extractor de Pedidos")
+        archivo = st.file_uploader("Subir PDF", type="pdf")
         if archivo:
             with pdfplumber.open(archivo) as pdf:
                 texto = "\n".join([p.extract_text() for p in pdf.pages])
-            st.success("PDF procesado.")
-            st.text_area("Contenido:", texto[:500])
+            st.success("Análisis completado")
+            st.text_area("Texto detectado:", texto[:800])
 
     if st.sidebar.button("🔄 Refrescar Todo"):
-        st.cache_data.clear()
         st.rerun()
+else:
+    st.error("❌ Fallo crítico de conexión.")
+    st.info("Asegúrate de que tus Google Sheets estén compartidas como: 'Cualquier persona con el enlace puede leer'.")
