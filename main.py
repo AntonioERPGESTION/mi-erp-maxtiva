@@ -1,107 +1,104 @@
 import streamlit as st
 import pandas as pd
-import pdfplumber
-import re
+import gspread
+from google.oauth2.service_account import Credentials
+import base64
+import json
 
 # --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="MA XTIVA ERP - SISTEMA INTEGRAL", layout="wide", page_icon="🏢")
+st.set_page_config(page_title="MA XTIVA ERP - PANEL TOTAL", layout="wide", page_icon="🏗️")
 
-# Estilos visuales
-st.markdown("""
-    <style>
-    [data-testid="stSidebar"] { background-color: #FFD700; }
-    .stMetric { background-color: white; border: 2px solid #FFD700; padding: 15px; border-radius: 10px; }
-    .stButton>button { width: 100%; background-color: #1e3d59; color: white; }
-    </style>
-""", unsafe_allow_html=True)
-
-# --- CARGA DE DATOS ---
-def cargar_datos():
+# --- CONEXIÓN PROFESIONAL (LECTURA Y ESCRITURA) ---
+def conectar_google():
     try:
-        url_erp = st.secrets["gsheets"]["erp"]
-        url_gastos = st.secrets["gsheets"]["gastos"]
-        df_o = pd.read_csv(url_erp)
-        df_g = pd.read_csv(url_gastos)
-        return df_o, df_g, True
-    except:
-        return pd.DataFrame(), pd.DataFrame(), False
+        # Usamos la etiqueta personalizada 'claves_gcp'
+        encoded = st.secrets["claves_gcp"]["json_base64"]
+        info = json.loads(base64.b64decode(encoded).decode("utf-8"))
+        
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        creds = Credentials.from_service_account_info(info, scopes=scope)
+        return gspread.authorize(creds)
+    except Exception as e:
+        st.error(f"Error de conexión: {e}")
+        return None
 
-df_o, df_g, conectado = cargar_datos()
+def obtener_datos(nombre_pestaña):
+    gc = conectar_google()
+    if gc:
+        try:
+            # Abre el archivo principal
+            sh = gc.open("ERP MAXTIVA")
+            return sh.worksheet(nombre_pestaña)
+        except Exception as e:
+            st.error(f"Pestaña '{nombre_pestaña}' no encontrada: {e}")
+    return None
 
-# --- BARRA LATERAL (MENÚ COMPLETO) ---
-with st.sidebar:
-    st.title("🏢 GRUPO MAXTIVA")
-    st.divider()
-    if conectado:
-        st.success("Sincronizado con Drive")
-        menu = st.radio("SECCIONES", [
-            "📊 Dashboard General",
-            "🏗️ Gestión de Obras",
-            "👥 Empleados",
-            "⏱️ Control de Horas",
-            "💸 Gastos y Facturas",
-            "📦 Extractor PDF (IA)"
-        ])
-    else:
-        st.error("Error de Conexión")
-        menu = None
+# --- INTERFAZ ---
+st.sidebar.title("🏢 MA XTIVA ERP")
+menu = st.sidebar.radio("IR A:", ["Obras", "Empleados", "Horas", "Gastos"])
 
-# --- MÓDULOS DEL SISTEMA ---
-if conectado:
+# --- FUNCIÓN CRUD (Añadir, Editar, Borrar) ---
+def modulo_interactivo(titulo, pestaña, campos):
+    st.title(f"Gestión de {titulo}")
+    ws = obtener_datos(pestaña)
     
-    if menu == "📊 Dashboard General":
-        st.title("📊 Resumen Ejecutivo")
-        c1, c2, c3 = st.columns(3)
-        # Cálculos automáticos
-        ingresos = df_o['PRESUPUESTO'].sum() if 'PRESUPUESTO' in df_o.columns else 0
-        gastos = df_g['Importe'].sum() if 'Importe' in df_g.columns else 0
+    if ws:
+        # Cargar datos actuales
+        df = pd.DataFrame(ws.get_all_records())
         
-        c1.metric("Presupuesto en Curso", f"{ingresos:,.2f} €")
-        c2.metric("Gastos Acumulados", f"{gastos:,.2f} €")
-        c3.metric("Margen Neto", f"{ingresos - gastos:,.2f} €")
+        tab_ver, tab_add, tab_edit = st.tabs(["📋 Listado / Borrar", "➕ Añadir", "✏️ Modificar"])
         
-        st.subheader("Obras por Estado")
-        if 'ESTADO' in df_o.columns:
-            st.bar_chart(df_o['ESTADO'].value_value_counts())
+        with tab_ver:
+            if not df.empty:
+                st.write("Datos actuales en Google Sheets:")
+                # Selección para borrar
+                fila_idx = st.selectbox("Selecciona fila para eliminar", df.index, format_func=lambda x: f"Fila {x} - {df.iloc[x].iloc[0]}")
+                if st.button(f"🗑️ Eliminar fila {fila_idx}", type="primary"):
+                    ws.delete_rows(int(fila_idx) + 2)
+                    st.success("Registro eliminado correctamente.")
+                    st.rerun()
+                st.dataframe(df, use_container_width=True)
+            else:
+                st.info("No hay registros en esta pestaña.")
 
-    elif menu == "🏗️ Gestión de Obras":
-        st.title("🏗️ Listado de Obras y Proyectos")
-        st.dataframe(df_o, use_container_width=True)
-        st.info("Para añadir o borrar obras, usa el Excel 'ERP MAXTIVA'.")
+        with tab_add:
+            with st.form("nuevo_registro"):
+                st.subheader(f"Nuevo {titulo}")
+                datos_nuevos = []
+                for campo in campos:
+                    datos_nuevos.append(st.text_input(campo))
+                
+                if st.form_submit_button("💾 Guardar en Drive"):
+                    ws.append_row(datos_nuevos)
+                    st.success("Guardado con éxito.")
+                    st.rerun()
 
-    elif menu == "👥 Empleados":
-        st.title("👥 Gestión de Personal")
-        # Aquí puedes crear una pestaña en tu Excel llamada "Empleados"
-        st.info("Este módulo muestra los empleados activos registrados en la base de datos.")
-        st.write("### Plantilla Actual")
-        st.warning("Crea una pestaña llamada 'Empleados' en tu Excel para ver los nombres aquí.")
+        with tab_edit:
+            if not df.empty:
+                st.subheader("Editar registro")
+                idx_e = st.selectbox("Fila a editar", df.index, key="edit_sel")
+                nuevos_valores = []
+                for i, campo in enumerate(campos):
+                    valor_actual = str(df.iloc[idx_e][campo])
+                    nuevos_valores.append(st.text_input(f"Editar {campo}", value=valor_actual, key=f"e_{i}"))
+                
+                if st.button("🆙 Actualizar Fila"):
+                    ws.update(f"A{idx_e+2}", [nuevos_valores])
+                    st.success("Fila actualizada.")
+                    st.rerun()
 
-    elif menu == "⏱️ Control de Horas":
-        st.title("⏱️ Registro de Jornadas")
-        st.write("Control de horas por trabajador y obra.")
-        # Ejemplo de tabla manual hasta que tengas la pestaña en Drive
-        df_horas = pd.DataFrame({"Empleado": ["Juan", "Pedro"], "Horas": [8, 7], "Obra": ["Primor", "Sinergym"]})
-        st.table(df_horas)
+# --- CARGA DE MÓDULOS ---
+if menu == "Obras":
+    modulo_interactivo("Obras", "Obras", ["ID", "CLIENTE", "NOMBRE", "PRESUPUESTO", "ESTADO"])
 
-    elif menu == "💸 Gastos y Facturas":
-        st.title("💸 Control de Gastos")
-        st.write("Datos extraídos de 'gastos MAXTIVA':")
-        st.dataframe(df_g, use_container_width=True)
+elif menu == "Empleados":
+    modulo_interactivo("Empleados", "Empleados", ["NOMBRE", "DNI", "PUESTO", "TELÉFONO"])
 
-    elif menu == "📦 Extractor PDF (IA)":
-        st.title("📦 Extractor de Datos PDF")
-        archivo = st.file_uploader("Subir PDF de proveedor", type="pdf")
-        if archivo:
-            with pdfplumber.open(archivo) as pdf:
-                texto = "\n".join([p.extract_text() for p in pdf.pages])
-            st.success("Análisis completado")
-            importes = re.findall(r"(\d+[\.,]\d{2})", texto)
-            if importes:
-                st.info(f"Importe detectado: {importes[-1]} €")
-            st.text_area("Contenido extraído:", texto[:800])
+elif menu == "Horas":
+    modulo_interactivo("Horas", "Horas", ["FECHA", "EMPLEADO", "OBRA", "HORAS"])
 
-    if st.sidebar.button("🔄 Refrescar Todo"):
-        st.rerun()
+elif menu == "Gastos":
+    modulo_interactivo("Gastos", "Gastos", ["FECHA", "CONCEPTO", "IMPORTE", "OBRA"])
 
-else:
-    st.error("Por favor, verifica los Secrets y que las hojas sean públicas.")
+if st.sidebar.button("🔄 Sincronizar Ahora"):
+    st.rerun()
