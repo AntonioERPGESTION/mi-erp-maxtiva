@@ -102,3 +102,41 @@ elif menu == "Gastos":
 
 if st.sidebar.button("🔄 Sincronizar Ahora"):
     st.rerun()
+import streamlit as st
+import gspread
+from google.oauth2.service_account import Credentials
+import base64
+import json
+import time
+
+def conectar_google():
+    try:
+        # Usamos tu clave en Base64 que ya tenemos configurada
+        encoded = st.secrets["claves_gcp"]["json_base64"]
+        info = json.loads(base64.b64decode(encoded).decode("utf-8"))
+        
+        # IMPORTANTE: Necesitamos ambos scopes para que funcione el CRUD
+        scope = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
+        ]
+        
+        creds = Credentials.from_service_account_info(info, scopes=scope)
+        return gspread.authorize(creds)
+    except Exception as e:
+        st.error(f"Error de configuración de claves: {e}")
+        return None
+
+def obtener_datos(nombre_pestaña):
+    gc = conectar_google()
+    if gc:
+        try:
+            # Abrimos el archivo por su nombre exacto
+            sh = gc.open("ERP MAXTIVA")
+            return sh.worksheet(nombre_pestaña)
+        except Exception as e:
+            if "403" in str(e):
+                st.warning("⚠️ Google está activando los permisos. Espera 1 minuto y pulsa Sincronizar.")
+            else:
+                st.error(f"Error al acceder a '{nombre_pestaña}': {e}")
+    return None
