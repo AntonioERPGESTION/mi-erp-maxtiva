@@ -1,69 +1,70 @@
-import streamlit as st
-import pandas as pd
-import gspread
-from google.oauth2.service_account import Credentials
-import base64
-import json
-import time
+# --- LÓGICA DE MÓDULOS (Alineación corregida) ---
 
-# --- FUNCIÓN DE GUARDADO ULTRA-SEGURA ---
-def guardar_datos_seguro(ws, df_editado, target):
-    try:
-        with st.spinner(f"Actualizando {target}..."):
-            # 1. LIMPIEZA DE DATOS (Vital para evitar fallos de Google)
-            # Convertimos todo a texto, quitamos Nulos y aseguramos que no haya caracteres raros
-            df_limpio = df_editado.fillna("").astype(str)
-            
-            # 2. VERIFICACIÓN DE COLUMNAS
-            # Si por algún motivo el editor borró las columnas, las redefinimos
-            columnas_maxtiva = {
-                "Obras": ["ID", "CLIENTE", "NOMBRE", "PRESUPUESTO", "ESTADO"],
-                "Empleados": ["NOMBRE", "DNI", "PUESTO", "TELÉFONO"],
-                "Gastos": ["FECHA", "CONCEPTO", "IMPORTE", "OBRA"],
-                "Horas": ["FECHA", "EMPLEADO", "OBRA", "HORAS"]
-            }
-            
-            # Si el dataframe está vacío o sin columnas, usamos las por defecto
-            if df_limpio.empty or len(df_limpio.columns) < 2:
-                columnas = columnas_maxtiva.get(target, ["Dato1", "Dato2"])
-                datos_a_subir = [columnas]
-            else:
-                datos_a_subir = [df_limpio.columns.values.tolist()] + df_limpio.values.tolist()
+# 1. DASHBOARD
+if menu == "📊 Dashboard General":
+    st.title("📊 Resumen de Operaciones")
+    ws_o = obtener_pestaña("Obras")
+    ws_g = obtener_pestaña("Gastos")
+    
+    c1, c2, c3 = st.columns(3)
+    if ws_o:
+        df_o = pd.DataFrame(ws_o.get_all_records())
+        ingresos = pd.to_numeric(df_o['PRESUPUESTO'], errors='coerce').sum() if 'PRESUPUESTO' in df_o.columns else 0
+        c1.metric("Ingresos Totales", f"{ingresos:,.2f} €")
+    
+    if ws_g:
+        df_g = pd.DataFrame(ws_g.get_all_records())
+        col_imp = [c for c in df_g.columns if c.lower() == 'importe']
+        gastos = pd.to_numeric(df_g[col_imp[0]], errors='coerce').sum() if col_imp else 0
+        c2.metric("Gastos Totales", f"{gastos:,.2f} €")
+        if ws_o and ws_g:
+            c3.metric("Margen Neto", f"{ingresos - gastos:,.2f} €")
 
-            # 3. OPERACIÓN ATÓMICA (Borrar y Escribir rápido)
-            ws.clear()
-            # Usamos 'A1' como ancla para reconstruir la tabla
-            ws.update('A1', datos_a_subir)
-            
-            st.success(f"✅ Hoja '{target}' sincronizada con éxito.")
-            time.sleep(1)
-            st.rerun()
-    except Exception as e:
-        st.error(f"❌ Error al sincronizar: {e}")
-        st.info("Intenta restaurar la versión anterior en Google Sheets si el problema persiste.")
-
-# --- DENTRO DE TU LÓGICA DE MÓDULOS ---
+# 2. MÓDULOS EDITABLES (Obras, Empleados, Horas, Gastos)
 elif menu in ["🏗️ Gestión de Obras", "👥 Gestión de Empleados", "⏱️ Imputación de Horas", "💸 Adjudicación de Gastos"]:
-    mapeo = {"🏗️ Gestión de Obras": "Obras", "👥 Gestión de Empleados": "Empleados", 
-             "⏱️ Imputación de Horas": "Horas", "💸 Adjudicación de Gastos": "Gastos"}
+    mapeo = {
+        "🏗️ Gestión de Obras": "Obras",
+        "👥 Gestión de Empleados": "Empleados",
+        "⏱️ Imputación de Horas": "Horas",
+        "💸 Adjudicación de Gastos": "Gastos"
+    }
     target = mapeo[menu]
+    st.title(f"📝 {menu}")
     
     ws = obtener_pestaña(target)
     if ws:
-        st.title(f"📝 {menu}")
-        
-        # Leemos los datos (si la hoja está borrada, creamos un DF vacío con columnas)
         raw = ws.get_all_records()
+        # Si la hoja está vacía, forzamos columnas para que no se borren
         if not raw:
-            columnas_defecto = ["ID", "CLIENTE", "NOMBRE", "PRESUPUESTO", "ESTADO"] if target == "Obras" else []
-            df_actual = pd.DataFrame(columns=columnas_defecto)
+            cols_fix = {
+                "Obras": ["ID", "CLIENTE", "NOMBRE", "PRESUPUESTO", "ESTADO"],
+                "Empleados": ["NOMBRE", "DNI", "PUESTO", "TELÉFONO"],
+                "Horas": ["FECHA", "EMPLEADO", "OBRA", "HORAS"],
+                "Gastos": ["FECHA", "CONCEPTO", "IMPORTE", "OBRA"]
+            }
+            df_actual = pd.DataFrame(columns=cols_fix.get(target, []))
         else:
             df_actual = pd.DataFrame(raw)
 
-        # EDITOR INTERACTIVO
-        # num_rows="dynamic" permite añadir filas con el botón (+) al final
+        # EDITOR DE DATOS
         df_editado = st.data_editor(df_actual, use_container_width=True, num_rows="dynamic", key=f"ed_{target}")
         
-        # Botón de Guardado
         if st.button(f"💾 GUARDAR CAMBIOS EN {target.upper()}", type="primary"):
             guardar_datos_seguro(ws, df_editado, target)
+    else:
+        st.error(f"Pestaña '{target}' no encontrada en el Excel.")
+
+# 3. PEDIDOS PDF
+elif menu == "📦 Pedidos y Facturas PDF":
+    st.title("📦 Extractor de Pedidos")
+    archivo = st.file_uploader("Subir PDF", type="pdf")
+    if archivo:
+        with pdfplumber.open(archivo) as pdf:
+            texto = "\n".join([p.extract_text() for p in pdf.pages])
+        
+        importes = re.findall(r"(\d+[\.,]\d{2})", texto)
+        if importes:
+            st.success(f"💰 Importe detectado: {importes[-1]} €")
+        
+        st.subheader("Texto Extraído")
+        st.text_area("Contenido:", texto, height=400)
