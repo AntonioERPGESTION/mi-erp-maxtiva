@@ -4,139 +4,146 @@ import gspread
 from google.oauth2.service_account import Credentials
 import base64
 import json
+import pdfplumber
+import re
 
 # --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="MA XTIVA ERP - PANEL TOTAL", layout="wide", page_icon="🏗️")
+st.set_page_config(page_title="MA XTIVA ERP - SISTEMA COMPLETO", layout="wide", page_icon="🏢")
 
-# --- CONEXIÓN PROFESIONAL (LECTURA Y ESCRITURA) ---
+# --- ESTILOS CORPORATIVOS ---
+st.markdown("""
+    <style>
+    [data-testid="stSidebar"] { background-color: #FFD700; }
+    .stMetric { background-color: white; border: 2px solid #FFD700; padding: 15px; border-radius: 10px; }
+    .stButton>button { background-color: #1e3d59; color: white; border-radius: 5px; }
+    </style>
+""", unsafe_allow_html=True)
+
+# --- CONEXIÓN SEGURA ---
 def conectar_google():
     try:
-        # Usamos la etiqueta personalizada 'claves_gcp'
         encoded = st.secrets["claves_gcp"]["json_base64"]
         info = json.loads(base64.b64decode(encoded).decode("utf-8"))
-        
-        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
         creds = Credentials.from_service_account_info(info, scopes=scope)
         return gspread.authorize(creds)
     except Exception as e:
-        st.error(f"Error de conexión: {e}")
+        st.sidebar.error(f"Error de llaves: {e}")
         return None
 
-def obtener_datos(nombre_pestaña):
+def obtener_pestaña(nombre_ws):
     gc = conectar_google()
     if gc:
         try:
-            # Abre el archivo principal
             sh = gc.open("ERP MAXTIVA")
-            return sh.worksheet(nombre_pestaña)
-        except Exception as e:
-            st.error(f"Pestaña '{nombre_pestaña}' no encontrada: {e}")
+            return sh.worksheet(nombre_ws)
+        except:
+            return None
     return None
 
-# --- INTERFAZ ---
-st.sidebar.title("🏢 MA XTIVA ERP")
-menu = st.sidebar.radio("IR A:", ["Obras", "Empleados", "Horas", "Gastos"])
+# --- NAVEGACIÓN LATERAL ---
+with st.sidebar:
+    st.title("🏢 GRUPO MAXTIVA")
+    st.divider()
+    menu = st.radio("MENÚ PRINCIPAL", [
+        "📊 Dashboard", 
+        "🏗️ Gestión de Obras", 
+        "👥 Empleados", 
+        "⏱️ Control de Horas", 
+        "💸 Gastos", 
+        "📦 Pedidos PDF"
+    ])
+    st.divider()
+    if st.button("🔄 Sincronizar Todo"):
+        st.cache_data.clear()
+        st.rerun()
 
-# --- FUNCIÓN CRUD (Añadir, Editar, Borrar) ---
-def modulo_interactivo(titulo, pestaña, campos):
-    st.title(f"Gestión de {titulo}")
-    ws = obtener_datos(pestaña)
+# --- MÓDULOS DEL SISTEMA ---
+
+# 1. DASHBOARD
+if menu == "📊 Dashboard":
+    st.title("📊 Resumen Ejecutivo")
+    ws_obras = obtener_pestaña("Obras")
+    ws_gastos = obtener_pestaña("Gastos")
     
+    if ws_obras and ws_gastos:
+        df_o = pd.DataFrame(ws_obras.get_all_records())
+        df_g = pd.DataFrame(ws_gastos.get_all_records())
+        
+        c1, c2, c3 = st.columns(3)
+        ingresos = pd.to_numeric(df_o['PRESUPUESTO'], errors='coerce').sum() if 'PRESUPUESTO' in df_o.columns else 0
+        gastos_totales = pd.to_numeric(df_g['IMPORTE'], errors='coerce').sum() if 'IMPORTE' in df_g.columns else 0
+        
+        c1.metric("Presupuesto Total", f"{ingresos:,.2f} €")
+        c2.metric("Gastos Acumulados", f"{gastos_totales:,.2f} €")
+        c3.metric("Margen Neto", f"{ingresos - gastos_totales:,.2f} €")
+        
+        st.subheader("Estado de Proyectos")
+        st.dataframe(df_o, use_container_width=True)
+
+# 2. GESTIÓN DE OBRAS (CRUD)
+elif menu == "🏗️ Gestión de Obras":
+    st.title("🏗️ Control de Obras")
+    ws = obtener_pestaña("Obras")
     if ws:
-        # Cargar datos actuales
         df = pd.DataFrame(ws.get_all_records())
-        
-        tab_ver, tab_add, tab_edit = st.tabs(["📋 Listado / Borrar", "➕ Añadir", "✏️ Modificar"])
-        
-        with tab_ver:
+        t1, t2 = st.tabs(["📋 Ver/Borrar", "➕ Añadir Obra"])
+        with t1:
             if not df.empty:
-                st.write("Datos actuales en Google Sheets:")
-                # Selección para borrar
-                fila_idx = st.selectbox("Selecciona fila para eliminar", df.index, format_func=lambda x: f"Fila {x} - {df.iloc[x].iloc[0]}")
-                if st.button(f"🗑️ Eliminar fila {fila_idx}", type="primary"):
-                    ws.delete_rows(int(fila_idx) + 2)
-                    st.success("Registro eliminado correctamente.")
-                    st.rerun()
+                idx = st.selectbox("Seleccionar para borrar", df.index)
+                if st.button("🗑️ Eliminar Registro"):
+                    ws.delete_rows(int(idx) + 2)
+                    st.success("Borrado. Sincroniza para actualizar.")
                 st.dataframe(df, use_container_width=True)
-            else:
-                st.info("No hay registros en esta pestaña.")
+        with t2:
+            with st.form("add_obra"):
+                id_o = st.text_input("ID")
+                cli = st.text_input("Cliente")
+                nom = st.text_input("Nombre Obra")
+                pre = st.text_input("Presupuesto")
+                est = st.selectbox("Estado", ["Activa", "Finalizada", "Pendiente"])
+                if st.form_submit_button("Guardar Obra"):
+                    ws.append_row([id_o, cli, nom, pre, est])
+                    st.success("Obra guardada.")
 
-        with tab_add:
-            with st.form("nuevo_registro"):
-                st.subheader(f"Nuevo {titulo}")
-                datos_nuevos = []
-                for campo in campos:
-                    datos_nuevos.append(st.text_input(campo))
-                
-                if st.form_submit_button("💾 Guardar en Drive"):
-                    ws.append_row(datos_nuevos)
-                    st.success("Guardado con éxito.")
+# 3. EMPLEADOS
+elif menu == "👥 Empleados":
+    st.title("👥 Plantilla de Empleados")
+    ws = obtener_pestaña("Empleados")
+    if ws:
+        df = pd.DataFrame(ws.get_all_records())
+        st.dataframe(df, use_container_width=True)
+        with st.expander("➕ Añadir Empleado"):
+            with st.form("add_emp"):
+                nombre = st.text_input("Nombre Completo")
+                dni = st.text_input("DNI")
+                puesto = st.text_input("Puesto")
+                if st.form_submit_button("Registrar"):
+                    ws.append_row([nombre, dni, puesto])
                     st.rerun()
 
-        with tab_edit:
-            if not df.empty:
-                st.subheader("Editar registro")
-                idx_e = st.selectbox("Fila a editar", df.index, key="edit_sel")
-                nuevos_valores = []
-                for i, campo in enumerate(campos):
-                    valor_actual = str(df.iloc[idx_e][campo])
-                    nuevos_valores.append(st.text_input(f"Editar {campo}", value=valor_actual, key=f"e_{i}"))
-                
-                if st.button("🆙 Actualizar Fila"):
-                    ws.update(f"A{idx_e+2}", [nuevos_valores])
-                    st.success("Fila actualizada.")
-                    st.rerun()
-
-# --- CARGA DE MÓDULOS ---
-if menu == "Obras":
-    modulo_interactivo("Obras", "Obras", ["ID", "CLIENTE", "NOMBRE", "PRESUPUESTO", "ESTADO"])
-
-elif menu == "Empleados":
-    modulo_interactivo("Empleados", "Empleados", ["NOMBRE", "DNI", "PUESTO", "TELÉFONO"])
-
-elif menu == "Horas":
-    modulo_interactivo("Horas", "Horas", ["FECHA", "EMPLEADO", "OBRA", "HORAS"])
-
-elif menu == "Gastos":
-    modulo_interactivo("Gastos", "Gastos", ["FECHA", "CONCEPTO", "IMPORTE", "OBRA"])
-
-if st.sidebar.button("🔄 Sincronizar Ahora"):
-    st.rerun()
-import streamlit as st
-import gspread
-from google.oauth2.service_account import Credentials
-import base64
-import json
-import time
-
-def conectar_google():
-    try:
-        # Usamos tu clave en Base64 que ya tenemos configurada
-        encoded = st.secrets["claves_gcp"]["json_base64"]
-        info = json.loads(base64.b64decode(encoded).decode("utf-8"))
+# 4. PEDIDOS PDF (EL QUE FALTABA)
+elif menu == "📦 Pedidos PDF":
+    st.title("📦 Extractor de Datos de Pedidos")
+    st.info("Sube un PDF y el sistema extraerá el importe y el texto automáticamente.")
+    archivo = st.file_uploader("Sube el PDF del proveedor", type="pdf")
+    if archivo:
+        with pdfplumber.open(archivo) as pdf:
+            texto_completo = "\n".join([pagina.extract_text() for pagina in pdf.pages])
         
-        # IMPORTANTE: Necesitamos ambos scopes para que funcione el CRUD
-        scope = [
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive"
-        ]
+        # Lógica de extracción de importes
+        importes = re.findall(r"(\d+[\.,]\d{2})", texto_completo)
+        if importes:
+            st.success(f"💰 Importe detectado: {importes[-1]} €")
         
-        creds = Credentials.from_service_account_info(info, scopes=scope)
-        return gspread.authorize(creds)
-    except Exception as e:
-        st.error(f"Error de configuración de claves: {e}")
-        return None
+        st.subheader("Texto Extraído")
+        st.text_area("Previsualización:", texto_completo, height=400)
 
-def obtener_datos(nombre_pestaña):
-    gc = conectar_google()
-    if gc:
-        try:
-            # Abrimos el archivo por su nombre exacto
-            sh = gc.open("ERP MAXTIVA")
-            return sh.worksheet(nombre_pestaña)
-        except Exception as e:
-            if "403" in str(e):
-                st.warning("⚠️ Google está activando los permisos. Espera 1 minuto y pulsa Sincronizar.")
-            else:
-                st.error(f"Error al acceder a '{nombre_pestaña}': {e}")
-    return None
+# 5. GASTOS / HORAS (ESTRUCTURA SIMILAR)
+else:
+    st.title(f"{menu}")
+    st.warning(f"Módulo {menu} activo. Asegúrate de tener la pestaña correspondiente en el Excel.")
+    ws = obtener_pestaña(menu.split()[-1]) # Busca 'Gastos' o 'Horas'
+    if ws:
+        df = pd.DataFrame(ws.get_all_records())
+        st.dataframe(df, use_container_width=True)
