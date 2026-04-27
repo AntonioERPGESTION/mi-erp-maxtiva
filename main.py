@@ -5,99 +5,81 @@ import pandas as pd
 import time
 
 # --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="Maxtiva ERP - Gestión de Obra", layout="wide", page_icon="🏗️")
-
-# --- ESTILOS MAXTIVA ---
-st.markdown("""
-    <style>
-    .stApp { background-color: #f8f9fa; }
-    .stButton>button { border-radius: 5px; height: 3em; background-color: #004a99; color: white; }
-    .stMetric { background-color: white; border: 1px solid #e0e0e0; padding: 15px; border-radius: 8px; }
-    </style>
-""", unsafe_allow_html=True)
+st.set_page_config(page_title="Maxtiva ERP - Sistema Integral", layout="wide", page_icon="🏗️")
 
 # --- LÓGICA DEL POP-UP (UNIMATCH) ---
-@st.dialog("🔍 UniMatch: Auditoría de Planos Unifilares")
+@st.dialog("🔍 UniMatch: Auditoría de Planos")
 def modal_unimatch():
-    st.write("Carga los esquemas para detectar desviaciones entre Proyecto y Ejecución.")
-    
+    st.write("Sincroniza la ejecución real (CETA) contra el proyecto (ING).")
     c1, c2 = st.columns(2)
-    f_ing = c1.file_uploader("Documento base (ING)", type="pdf", key="ing_val")
-    f_ceta = c2.file_uploader("Documento ejecución (CETA)", type="pdf", key="ceta_val")
+    f_ing = c1.file_uploader("Proyecto ING", type="pdf", key="u_ing")
+    f_ceta = c2.file_uploader("Ejecución CETA", type="pdf", key="u_ceta")
 
     if f_ing and f_ceta:
-        with st.spinner("Escaneando nodos y etiquetas..."):
-            time.sleep(2)
-            # Simulación de los datos reales de tus archivos
-            circuitos_base = 14
-            circuitos_reales = 62 
-            dif = circuitos_reales - circuitos_base
-            coste_adicional = dif * 75.0 # Precio estimado por punto montado
-            
-            # Buscamos tus notas manuscritas
-            with pdfplumber.open(f_ceta) as pdf:
-                texto = " ".join([p.extract_text() for p in pdf.pages]).upper()
-            
-        st.success(f"Detección completada: **+{dif} circuitos** nuevos.")
+        with st.spinner("Analizando..."):
+            time.sleep(1.5)
+            # Datos basados en tus archivos reales
+            dif = 48 
+            coste = dif * 75.0
         
-        # Gráfica de impacto para el Pop-up
-        fig = go.Figure(data=[
-            go.Bar(name='Original', x=['Obra'], y=[circuitos_base * 75], marker_color='#004a99'),
-            go.Bar(name='Adicional', x=['Obra'], y=[coste_adicional], marker_color='#d9534f')
-        ])
-        fig.update_layout(barmode='stack', height=250, margin=dict(t=0,b=0,l=0,r=0))
-        st.plotly_chart(fig, use_container_width=True)
-
-        if "MISMA ENVOLVENTE" in texto:
-            st.warning("📝 Nota detectada: **MISMA ENVOLVENTE**. Se requiere recotizar armario unificado.")
-
-        if st.button("📥 Sincronizar con Presupuesto Maxtiva"):
-            st.session_state.audit_data = {
-                "extra": coste_adicional,
-                "diff": dif,
-                "msg": "Facturación adicional generada por UniMatch"
-            }
+        st.metric("Desviación Detectada", f"+{dif} circuitos", f"{coste:,.2f} €")
+        
+        if st.button("📥 Cargar Adicionales al ERP"):
+            st.session_state.audit_result = {"extra": coste, "puntos": dif}
             st.rerun()
 
-# --- CUERPO PRINCIPAL DEL ERP ---
+# --- CUERPO PRINCIPAL DEL GESTOR DE OBRAS (MAXTIVA) ---
 def main():
-    # Sidebar de Navegación
+    # 1. Barra Lateral (Navegación)
     st.sidebar.title("ERP Maxtiva")
-    st.sidebar.selectbox("Menú", ["Dashboard", "Facturación", "Personal", "Configuración"])
+    st.sidebar.button("🏠 Dashboard Principal")
+    st.sidebar.button("📋 Listado de Obras")
+    st.sidebar.button("💰 Facturación")
     
-    st.title("🏗️ Gestión de Proyecto: Reforma Eléctrica CETA")
+    # 2. Cabecera del Gestor
+    st.title("🏗️ Gestor de Obra: Sector CETA - Reforma")
     
-    # Cabecera con Botón de Auditoría
-    col_status, col_tool = st.columns([3, 1])
-    with col_status:
-        st.write("**Cliente:** Ingeniería Global S.L.")
-        st.write("**Ubicación:** Planta Baja y 1ª")
-    with col_tool:
-        if st.button("🔍 Iniciar Auditoría UniMatch"):
+    col_info, col_audit = st.columns([3, 1])
+    with col_info:
+        st.markdown("**Cliente:** Ingeniería Global | **Referencia:** 2024-CETA-01")
+        st.info("Estado: Ejecución de cuadros eléctricos en curso.")
+    
+    with col_audit:
+        # Aquí lanzamos el pop-up sin que desaparezca el resto
+        if st.button("🔍 Auditar con UniMatch", use_container_width=True):
             modal_unimatch()
 
     st.divider()
 
-    # Mostrar métricas si hay datos de auditoría
-    if "audit_data" in st.session_state:
-        d = st.session_state.audit_data
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Presupuesto Inicial", "4.500 €")
-        c2.metric("Adicionales Detectados", f"{d['extra']:,.2f} €", f"+{d['diff']} ptos")
-        c3.metric("Total Actualizado", f"{4500 + d['extra']:,.2f} €")
-        
-        st.success(f"✅ {d['msg']}")
-        
-        # Tabla de partidas para el portfolio
-        df = pd.DataFrame({
-            "Partida": ["Instalación Base", "Ampliación Sector CETA (Detectado por UniMatch)"],
-            "Cantidad": [1, d['diff']],
-            "Precio Unit.": [4500, 75],
-            "Subtotal": [4500, d['extra']]
-        })
-        st.table(df)
-    else:
-        st.info("No se han detectado variaciones aún. Usa el botón superior para auditar los planos.")
+    # 3. Resumen Económico (Métricas del ERP)
+    base_obra = 12500.00
+    extra_obra = st.session_state.get("audit_result", {}).get("extra", 0.0)
+    
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Presupuesto Contratado", f"{base_obra:,.2f} €")
+    c2.metric("Adicionales (UniMatch)", f"{extra_obra:,.2f} €", delta=f"{st.session_state.get('audit_result', {}).get('puntos', 0)} pts")
+    c3.metric("Total a Facturar", f"{base_obra + extra_obra:,.2f} €")
+    c4.metric("Margen de Obra", "22%", "2.5%")
+
+    # 4. Tabla de Partidas del ERP
+    st.subheader("📋 Desglose de Partidas y Materiales")
+    
+    data = {
+        "Partida": ["Acometida General", "Cuadro Socorro BT", "Ampliaciones CETA (IA)"],
+        "Estado": ["Finalizado", "En Proceso", "Pendiente Validar" if extra_obra > 0 else "N/A"],
+        "Importe": [8500, 4000, extra_obra]
+    }
+    df = pd.DataFrame(data)
+    st.table(df)
+
+    # 5. Gráfico de Control de Costes
+    st.subheader("📈 Análisis de Desviación")
+    fig = go.Figure(data=[
+        go.Bar(name='Presupuesto Base', x=['Proyecto'], y=[base_obra], marker_color='#004a99'),
+        go.Bar(name='Ampliaciones Det.', x=['Proyecto'], y=[extra_obra], marker_color='#d9534f')
+    ])
+    fig.update_layout(barmode='stack', height=350, template="plotly_white")
+    st.plotly_chart(fig, use_container_width=True)
 
 if __name__ == "__main__":
     main()
