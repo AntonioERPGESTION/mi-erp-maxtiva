@@ -7,6 +7,7 @@ import json
 import pdfplumber
 import re
 import time
+from datetime import datetime
 
 # --- 1. CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="MAXTIVA ERP - SISTEMA INTELIGENTE", layout="wide", page_icon="🏢")
@@ -51,11 +52,11 @@ with st.sidebar:
         "📦 Extractor PDF"
     ])
     st.divider()
-    if st.button("🔄 Actualizar Desplegables"):
+    if st.button("🔄 Actualizar Datos"):
         st.cache_data.clear()
         st.rerun()
 
-# --- 4. CARGA CRÍTICA DE LISTAS PARA DESPLEGABLES ---
+# --- 4. CARGA DE LISTAS PARA DESPLEGABLES ---
 lista_obras = []
 lista_empleados = []
 
@@ -97,7 +98,7 @@ if menu in ["🏗️ Gestión de Obras", "👥 Empleados", "⏱️ Control de Ho
         except:
             df_actual = pd.DataFrame()
 
-        # Si está vacío, crear columnas base
+        # Estructura base si está vacía
         if df_actual.empty:
             cols = {
                 "Obras": ["ID", "CLIENTE", "NOMBRE", "PRESUPUESTO", "ESTADO"],
@@ -107,24 +108,19 @@ if menu in ["🏗️ Gestión de Obras", "👥 Empleados", "⏱️ Control de Ho
             }
             df_actual = pd.DataFrame(columns=cols.get(target, ["Dato"]))
 
-        # --- CONFIGURACIÓN DE DESPLEGABLES ---
+        # --- CONFIGURACIÓN DE COLUMNAS ---
         config_columnas = {}
         
-        # Desplegable para Obras en los módulos correspondientes
         if target in ["Horas", "Gastos"]:
+            config_columnas["FECHA"] = st.column_config.TextColumn("FECHA", help="Deja vacío para usar la fecha de hoy")
             if lista_obras:
-                config_columnas["OBRA"] = st.column_config.SelectboxColumn("OBRA", options=lista_obras, required=True)
-            else:
-                st.warning("⚠️ No hay Obras registradas. El desplegable de OBRA no aparecerá hasta que añadas una en 'Gestión de Obras'.")
-
-        # Desplegable para Empleados en Horas
+                config_columnas["OBRA"] = st.column_config.SelectboxColumn("OBRA", options=lista_obras)
+        
         if target == "Horas":
             if lista_empleados:
-                config_columnas["EMPLEADO"] = st.column_config.SelectboxColumn("EMPLEADO", options=lista_empleados, required=True)
-            else:
-                st.warning("⚠️ No hay Empleados registrados.")
+                config_columnas["EMPLEADO"] = st.column_config.SelectboxColumn("EMPLEADO", options=lista_empleados)
             
-            # Cálculo de horas estimadas (10h por día)
+            # Auto-cálculo visual de estimadas
             if "DÍAS DURACIÓN OBRA" in df_actual.columns:
                 df_actual["DÍAS DURACIÓN OBRA"] = pd.to_numeric(df_actual["DÍAS DURACIÓN OBRA"], errors='coerce').fillna(0)
                 df_actual["HORAS ESTIMADAS"] = df_actual["DÍAS DURACIÓN OBRA"] * 10
@@ -142,28 +138,34 @@ if menu in ["🏗️ Gestión de Obras", "👥 Empleados", "⏱️ Control de Ho
             key=f"ed_{target}"
         )
         
+        # --- BOTÓN GUARDAR CON LÓGICA DE FECHA AUTO ---
         if st.button(f"💾 GUARDAR CAMBIOS EN {target.upper()}", type="primary"):
             try:
-                # Recalcular horas estimadas antes de guardar si es Horas
+                # 1. Lógica de Fecha Automática si está vacía
+                hoy = datetime.now().strftime("%d/%m/%Y")
+                if "FECHA" in df_editado.columns:
+                    # Rellenamos solo las celdas vacías o con espacios con la fecha de hoy
+                    df_editado["FECHA"] = df_editado["FECHA"].apply(lambda x: hoy if str(x).strip() == "" else x)
+
+                # 2. Recalcular horas estimadas
                 if target == "Horas" and "DÍAS DURACIÓN OBRA" in df_editado.columns:
                     df_editado["HORAS ESTIMADAS"] = pd.to_numeric(df_editado["DÍAS DURACIÓN OBRA"], errors='coerce').fillna(0) * 10
                 
+                # 3. Subir a Google
                 df_final = df_editado.fillna("").astype(str)
                 datos = [df_final.columns.values.tolist()] + df_final.values.tolist()
                 ws.clear()
                 ws.update('A1', datos)
-                st.success("✅ Datos guardados correctamente.")
+                
+                st.success(f"✅ Guardado. Las fechas vacías se han registrado como {hoy}")
                 time.sleep(1)
                 st.rerun()
             except Exception as e:
-                st.error(f"Error al guardar: {e}")
-    else:
-        st.error(f"Pestaña '{target}' no encontrada.")
+                st.error(f"Error: {e}")
 
-# (El Dashboard y el Extractor PDF se mantienen igual)
 elif menu == "📊 Dashboard":
     st.title("📊 Resumen")
-    st.info("Selecciona un módulo para editar.")
+    st.info("Módulos de gestión listos.")
 elif menu == "📦 Extractor PDF":
     st.title("📦 Extractor")
-    st.write("Sube un archivo para analizar.")
+    st.write("Sube el PDF para procesar.")
