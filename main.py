@@ -7,158 +7,128 @@ import re
 import time
 
 # --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="Maxtiva ERP - Pro Sync", layout="wide", page_icon="🏗️")
+st.set_page_config(page_title="Maxtiva ERP v21 - Full System", layout="wide")
 
-# --- ESTILOS CORPORATIVOS ---
+# --- ESTILOS AMARILLO MAXTIVA ---
 st.markdown("""
     <style>
     .stApp { background-color: #f8f9fa; }
     [data-testid="stSidebar"] { background-color: #FFD700; color: #1e3d59; font-weight: bold; }
-    .stMetric { background-color: white; border: 2px solid #FFD700; padding: 15px; border-radius: 10px; }
-    .stButton>button { background-color: #FFD700; color: #1e3d59; font-weight: bold; width: 100%; border: 1px solid #1e3d59; }
-    h1, h2, h3 { color: #1e3d59; }
+    .stMetric { background-color: white; border: 2px solid #FFD700; border-radius: 10px; padding: 15px; }
+    .stButton>button { background-color: #FFD700; color: #1e3d59; font-weight: bold; border: 1px solid #1e3d59; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- CONEXIÓN BLINDADA A GOOGLE SHEETS ---
+# --- CONEXIÓN DE SEGURIDAD REFORZADA ---
 def get_gsheet_client():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    
     try:
-        # 1. Intentar cargar desde Secrets (Streamlit Cloud)
         if "gcp_service_account" in st.secrets:
             info = dict(st.secrets["gcp_service_account"])
-            # Limpieza crítica de la llave privada
-            info["private_key"] = info["private_key"].replace("\\n", "\n").strip()
+            # LIMPIEZA EXTREMA: Borra cualquier residuo de formato
+            key = info["private_key"].replace("\\n", "\n")
+            lines = [l.strip() for l in key.split('\n') if l.strip()]
+            info["private_key"] = "\n".join(lines)
+            
             creds = Credentials.from_service_account_info(info, scopes=scope)
             return gspread.authorize(creds)
-        
-        # 2. Intentar cargar desde archivo local (Desarrollo)
-        creds = Credentials.from_service_account_file("credentials.json", scopes=scope)
-        return gspread.authorize(creds)
     except Exception as e:
-        st.error(f"Fallo en credenciales: {e}")
-        return None
+        st.error(f"Error de validación de llave: {e}")
+    return None
 
-def load_all_data():
+def load_data():
     client = get_gsheet_client()
     if client:
         try:
-            # Sincronización con nombres de archivos exactos
+            # Archivos reales en tu Drive
             sh_o = client.open("ERP MAXTIVA").worksheet("Obras")
             sh_g = client.open("gastos MAXTIVA").get_worksheet(0)
-            
-            df_o = pd.DataFrame(sh_o.get_all_records())
-            df_g = pd.DataFrame(sh_g.get_all_records())
-            return df_o, df_g, True
+            return pd.DataFrame(sh_o.get_all_records()), pd.DataFrame(sh_g.get_all_records()), True
         except Exception as e:
-            st.error(f"Error de acceso: {e}")
-            st.info("Asegúrate de compartir las Sheets con el email de servicio.")
+            st.error(f"Error al abrir archivos: {e}")
+            st.info("💡 RECUERDA: Comparte tus Sheets con: maxtiva-erp@maxtiva-erp.iam.gserviceaccount.com")
     return pd.DataFrame(), pd.DataFrame(), False
 
-# --- INICIALIZACIÓN DE ESTADO ---
+# --- ESTADO DE SESIÓN ---
 if "db_o" not in st.session_state:
-    st.session_state.db_o, st.session_state.db_g, st.session_state.ready = load_all_data()
+    st.session_state.db_o, st.session_state.db_g, st.session_state.ready = load_data()
 
-# --- FUNCIONES DE ACCIÓN (CRUD) ---
-def sync_action(file_name, sheet_name, row=None, action="add", row_idx=None):
+# --- FUNCIONES DE ESCRITURA/BORRADO ---
+def run_sync(file_name, sheet_name, data=None, mode="add", index=None):
     client = get_gsheet_client()
-    if client:
-        sh = client.open(file_name).worksheet(sheet_name)
-        if action == "add":
-            sh.append_row(row)
-        elif action == "delete" and row_idx is not None:
-            sh.delete_rows(row_idx + 2) # +2 por encabezado y base 1
-        
-        # Recargar y refrescar
-        st.session_state.db_o, st.session_state.db_g, st.session_state.ready = load_all_data()
-        st.toast(f"Acción {action} completada en Drive")
-        time.sleep(1)
-        st.rerun()
+    sh = client.open(file_name).worksheet(sheet_name)
+    if mode == "add":
+        sh.append_row(data)
+    elif mode == "delete":
+        sh.delete_rows(index + 2)
+    st.session_state.db_o, st.session_state.db_g, st.session_state.ready = load_data()
+    st.rerun()
 
-# --- MÓDULO DASHBOARD ---
+# --- MÓDULOS DEL SISTEMA ---
+
 def modulo_dashboard():
-    st.title("📊 Resumen Ejecutivo Maxtiva")
+    st.title("📊 Panel de Control Real-Time")
     o, g = st.session_state.db_o, st.session_state.db_g
-    
     if not o.empty:
         c1, c2, c3 = st.columns(3)
-        ingresos = o['PRESUPUESTO'].sum()
-        gastos_tot = g['Importe'].sum() if not g.empty else 0
-        c1.metric("Ingresos Totales", f"{ingresos:,.2f} €")
-        c2.metric("Gastos Totales", f"{gastos_tot:,.2f} €")
-        c3.metric("Margen Neto", f"{ingresos - gastos_tot:,.2f} €")
-        
-        st.divider()
-        st.subheader("Obras Registradas")
+        c1.metric("Ingresos", f"{o['PRESUPUESTO'].sum():,.2f} €")
+        c2.metric("Gastos", f"{g['Importe'].sum() if not g.empty else 0:,.2f} €")
+        c3.metric("Margen", f"{o['PRESUPUESTO'].sum() - (g['Importe'].sum() if not g.empty else 0):,.2f} €")
+        st.write("### Obras en Curso")
         st.dataframe(o, use_container_width=True)
-    else:
-        st.warning("No hay datos disponibles en 'ERP MAXTIVA'.")
 
-# --- MÓDULO PEDIDOS PDF ---
+def modulo_gestion():
+    st.title("🏗️ Gestión de Obras")
+    t1, t2 = st.tabs(["➕ Añadir Obra", "🗑️ Eliminar"])
+    with t1:
+        with st.form("add_form"):
+            c = st.columns(2)
+            id_n = c[0].text_input("ID")
+            cli = c[1].text_input("Cliente")
+            nom = st.text_input("Nombre de la Obra")
+            pre = st.number_input("Presupuesto", min_value=0.0)
+            if st.form_submit_button("Guardar en Google Drive"):
+                run_sync("ERP MAXTIVA", "Obras", [id_n, cli, pre, "Activa", nom, "Localización"], "add")
+    with t2:
+        if not st.session_state.db_o.empty:
+            sel = st.selectbox("Selecciona obra", st.session_state.db_o.index, format_func=lambda x: st.session_state.db_o.loc[x, 'NOMBRE'])
+            if st.button("Confirmar Borrado"):
+                run_sync("ERP MAXTIVA", "Obras", mode="delete", index=sel)
+
 def modulo_pedidos():
-    st.title("📦 Extracción de Pedidos e Importes")
-    archivo = st.file_uploader("Subir PDF de proveedor", type="pdf")
-    
-    if archivo:
-        with pdfplumber.open(archivo) as pdf:
-            texto = "\n".join([p.extract_text() for p in pdf.pages])
-            
-        # IA de detección de importe
-        importes = re.findall(r"(\d+[\.,]\d{2})\s*€", texto)
-        valor_sugerido = float(importes[-1].replace(",", ".")) if importes else 0.0
-        
-        with st.form("confirmar_p"):
-            st.info("Datos detectados en el documento")
-            col1, col2 = st.columns(2)
-            nom = col1.text_input("Concepto/Material", value=archivo.name)
-            imp = col2.number_input("Importe Extraído (€)", value=valor_sugerido)
-            det = st.text_area("Partidas detectadas", value=texto[:500] + "...")
-            
-            if st.form_submit_button("Guardar en Drive"):
-                # Asumimos que los pedidos van a la hoja de gastos
-                nueva_fila = ["Admin", str(time.strftime("%Y-%m-%d")), "Suministros", nom, imp, "", "Pedido PDF"]
-                sync_action("gastos MAXTIVA", "Hoja 1", row=nueva_fila)
+    st.title("📦 Extracción de Importes (IA)")
+    pdf = st.file_uploader("Sube factura/presupuesto", type="pdf")
+    if pdf:
+        with pdfplumber.open(pdf) as p:
+            texto = "\n".join([page.extract_text() for page in p.pages])
+        # Buscamos el importe total
+        match = re.findall(r"(\d+[\.,]\d{2})", texto)
+        imp_detectado = float(match[-1].replace(",", ".")) if match else 0.0
+        st.success(f"Importe detectado: {imp_detectado} €")
+        if st.button("Registrar como Gasto"):
+            run_sync("gastos MAXTIVA", "Hoja 1", ["Admin", str(time.strftime("%Y-%m-%d")), "Material", pdf.name, imp_detectado, "", "Extraído"], "add")
 
-# --- NAVEGACIÓN ---
+# --- NAVEGACIÓN PRINCIPAL ---
 def main():
     with st.sidebar:
-        st.header("🏢 GRUPO MAXTIVA")
+        st.header("🏢 MAXTIVA ERP")
         st.divider()
-        if not st.session_state.ready:
-            st.error("🔴 Sin conexión a Drive")
-            if st.button("🔌 Reintentar Conexión"):
-                st.session_state.db_o, st.session_state.db_g, st.session_state.ready = load_all_data()
-                st.rerun()
+        if st.session_state.ready:
+            st.success("Conectado a Drive")
         else:
-            st.success("🟢 Cloud Sync Activo")
+            st.error("Error de Conexión")
+            if st.button("Reintentar"):
+                st.session_state.db_o, st.session_state.db_g, st.session_state.ready = load_data()
+                st.rerun()
         
-        menu = st.radio("MENÚ", ["Dashboard", "Gestión de Obras", "Pedidos PDF"])
-        st.divider()
-        if st.button("🔄 Refrescar Todo"):
-            st.session_state.db_o, st.session_state.db_g, st.session_state.ready = load_all_data()
-            st.rerun()
-
-    if menu == "Dashboard": modulo_dashboard()
-    elif menu == "Pedidos PDF": modulo_pedidos()
-    elif menu == "Gestión de Obras":
-        st.title("🏗️ Gestión de Obras")
-        tab1, tab2 = st.tabs(["Añadir", "Borrar"])
-        with tab1:
-            with st.form("new_o"):
-                c1, c2 = st.columns(2)
-                id_o = c1.text_input("ID")
-                cli = c2.text_input("Cliente")
-                pre = st.number_input("Presupuesto", min_value=0.0)
-                nom = st.text_input("Nombre Obra")
-                if st.form_submit_button("Sincronizar Nueva Obra"):
-                    sync_action("ERP MAXTIVA", "Obras", row=[id_o, cli, pre, "Activa", nom, "Ubicación"])
-        with tab2:
-            if not st.session_state.db_o.empty:
-                sel = st.selectbox("Obra a eliminar", st.session_state.db_o.index, 
-                                 format_func=lambda x: f"{st.session_state.db_o.loc[x, 'NOMBRE']}")
-                if st.button("🗑️ Eliminar de Google Drive"):
-                    sync_action("ERP MAXTIVA", "Obras", action="delete", row_idx=sel)
+        menu = st.radio("MENÚ", ["Dashboard", "Gestión Obras", "Pedidos PDF"])
+        
+    if st.session_state.ready:
+        if menu == "Dashboard": modulo_dashboard()
+        elif menu == "Gestión Obras": modulo_gestion()
+        elif menu == "Pedidos PDF": modulo_pedidos()
+    else:
+        st.warning("Por favor, soluciona el error de credenciales para ver los módulos.")
 
 if __name__ == "__main__":
     main()
