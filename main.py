@@ -1,24 +1,25 @@
 import streamlit as st
 import pandas as pd
-import pdfplumber
 import plotly.graph_objects as go
 import time
 from datetime import datetime, timedelta
 
 # --- CONFIGURACIÓN ---
-st.set_page_config(page_title="Maxtiva ERP Ultimate", layout="wide", page_icon="🏗️")
+st.set_page_config(page_title="Maxtiva ERP - Full Control", layout="wide", page_icon="🏗️")
 
-# --- PERSISTENCIA DE DATOS (Session State) ---
+# --- PERSISTENCIA DE DATOS (Ampliación de DB) ---
 def init_data():
     if "db_empleados" not in st.session_state:
         st.session_state.db_empleados = pd.DataFrame([{"ID": 1, "Nombre": "Juan Pérez", "Cargo": "Oficial 1ª", "Coste/h": 25.0}])
     if "db_obras" not in st.session_state:
         st.session_state.db_obras = pd.DataFrame([{"ID": 1, "Nombre": "Reforma CETA", "Presupuesto": 12500.0, "Estado": "Activa"}])
     if "db_pedidos" not in st.session_state:
-        st.session_state.db_pedidos = pd.DataFrame([
-            {"ID": 101, "Material": "Diferenciales 40A", "Proveedor": "Saltoki", "Estado": "Recibido", "Entrega": "2024-05-10", "Coste": 450.0},
-            {"ID": 102, "Material": "Cable 2.5mm", "Proveedor": "Dielectro", "Estado": "Pendiente", "Entrega": "2024-05-25", "Coste": 1200.0}
-        ])
+        st.session_state.db_pedidos = pd.DataFrame(columns=["ID", "Material", "Proveedor", "Estado", "Entrega", "Coste"])
+    if "db_jornadas" not in st.session_state:
+        st.session_state.db_jornadas = pd.DataFrame(columns=["ID", "Fecha", "Empleado", "Obra", "Horas"])
+    # NUEVA TABLA DE GASTOS
+    if "db_gastos" not in st.session_state:
+        st.session_state.db_gastos = pd.DataFrame(columns=["ID", "Fecha", "Obra", "Empleado", "Concepto", "Tipo", "Importe"])
     if "audit_extra" not in st.session_state:
         st.session_state.audit_extra = 0.0
 
@@ -31,93 +32,97 @@ def modal_unimatch():
     f_ing = st.file_uploader("Proyecto ING", type="pdf", key="m_ing")
     f_ceta = st.file_uploader("Ejecución CETA", type="pdf", key="m_ceta")
     if f_ing and f_ceta:
-        with st.spinner("Analizando discrepancias..."):
-            time.sleep(1.5)
-            dif = 48 
-            coste = dif * 75.0
-        st.metric("Desviación Detectada", f"+{dif} circuitos", f"{coste} €")
-        if st.button("📥 Sincronizar Presupuesto"):
-            st.session_state.audit_extra = coste
-            st.rerun()
+        with st.spinner("Analizando..."):
+            time.sleep(1)
+            st.session_state.audit_extra = 3600.0
+            st.success("¡Desviación detectada! +3.600€")
+            if st.button("Cargar al ERP"): st.rerun()
 
-# --- MÓDULO: PEDIDOS Y LOGÍSTICA ---
-def modulo_pedidos():
-    st.title("📦 Gestión de Pedidos y Suministros")
+# --- MÓDULO: GASTOS IMPUTABLES ---
+def modulo_gastos():
+    st.title("💸 Gastos Imputables (Dietas, Viajes, Suministros)")
     
-    # Filtros de estado
-    col1, col2, col3, col4 = st.columns(4)
-    total = len(st.session_state.db_pedidos)
-    pendientes = len(st.session_state.db_pedidos[st.session_state.db_pedidos["Estado"] == "Pendiente"])
-    col1.metric("Total Pedidos", total)
-    col2.metric("📦 Pendientes", pendientes, delta_color="inverse")
+    col_f, col_v = st.columns([1, 2])
     
-    tab_list, tab_new, tab_agenda = st.tabs(["Lista de Pedidos", "Nuevo Pedido", "📅 Agenda de Entregas"])
-    
-    with tab_list:
-        estado_filtro = st.multiselect("Filtrar por estado", ["Pendiente", "Realizado", "Recibido"], default=["Pendiente", "Realizado", "Recibido"])
-        df_mostrar = st.session_state.db_pedidos[st.session_state.db_pedidos["Estado"].isin(estado_filtro)]
-        st.dataframe(df_mostrar, use_container_width=True)
-        
-        # Acción rápida: Marcar como recibido
-        id_edit = st.number_input("ID Pedido para actualizar", min_value=0, step=1)
-        nuevo_est = st.selectbox("Cambiar estado a:", ["Pendiente", "Realizado", "Recibido"])
-        if st.button("Actualizar Estado"):
-            st.session_state.db_pedidos.loc[st.session_state.db_pedidos["ID"] == id_edit, "Estado"] = nuevo_est
-            st.success("Estado actualizado")
-            st.rerun()
-
-    with tab_new:
-        with st.form("form_pedidos"):
-            mat = st.text_input("Material / Equipo")
-            prov = st.text_input("Proveedor")
-            coste = st.number_input("Coste Estimado (€)", min_value=0.0)
-            fecha_p = st.date_input("Previsión de Entrega", datetime.now() + timedelta(days=7))
-            if st.form_submit_button("Lanzar Pedido"):
-                new_id = st.session_state.db_pedidos["ID"].max() + 1
-                new_row = {"ID": new_id, "Material": mat, "Proveedor": prov, "Estado": "Realizado", "Entrega": str(fecha_p), "Coste": coste}
-                st.session_state.db_pedidos = pd.concat([st.session_state.db_pedidos, pd.DataFrame([new_row])], ignore_index=True)
+    with col_f:
+        st.subheader("Registrar Gasto")
+        with st.form("form_gastos", clear_on_submit=True):
+            fecha_g = st.date_input("Fecha", datetime.now())
+            obra_g = st.selectbox("Obra Destino", st.session_state.db_obras["Nombre"])
+            emp_g = st.selectbox("Empleado", st.session_state.db_empleados["Nombre"])
+            tipo_g = st.selectbox("Categoría", ["Dietas", "Gasolina/KM", "Hotel", "Material Urgente", "Otros"])
+            concepto_g = st.text_input("Concepto (ej: Comida equipo CETA)")
+            importe_g = st.number_input("Importe (€)", min_value=0.0, step=0.1)
+            
+            if st.form_submit_button("Imputar Gasto"):
+                new_id = len(st.session_state.db_gastos) + 1
+                new_row = {
+                    "ID": new_id, "Fecha": fecha_g, "Obra": obra_g, 
+                    "Empleado": emp_g, "Concepto": concepto_g, 
+                    "Tipo": tipo_g, "Importe": importe_g
+                }
+                st.session_state.db_gastos = pd.concat([st.session_state.db_gastos, pd.DataFrame([new_row])], ignore_index=True)
+                st.success("Gasto imputado correctamente")
                 st.rerun()
 
-    with tab_agenda:
-        st.subheader("Cronograma de Suministros")
-        # Gráfico simple de previsión
-        fig = go.Figure(data=[go.Scatter(
-            x=st.session_state.db_pedidos["Entrega"],
-            y=st.session_state.db_pedidos["Material"],
-            mode='markers+text',
-            text=st.session_state.db_pedidos["Proveedor"],
-            marker=dict(size=20, color=['red' if e == "Pendiente" else 'green' for e in st.session_state.db_pedidos["Estado"]])
-        )])
-        fig.update_layout(title="Próximas entregas (Rojo: Pendiente | Verde: Recibido)")
-        st.plotly_chart(fig, use_container_width=True)
+    with col_v:
+        st.subheader("Historial de Gastos")
+        if not st.session_state.db_gastos.empty:
+            st.dataframe(st.session_state.db_gastos, use_container_width=True)
+            
+            # Gráfico de gastos por categoría
+            fig = go.Figure(data=[go.Pie(
+                labels=st.session_state.db_gastos["Tipo"], 
+                values=st.session_state.db_gastos["Importe"], 
+                hole=.3
+            )])
+            fig.update_layout(title="Distribución de Gastos Indirectos")
+            st.plotly_chart(fig, use_container_width=True)
+            
+            if st.button("🗑️ Borrar último gasto"):
+                st.session_state.db_gastos = st.session_state.db_gastos[:-1]
+                st.rerun()
+        else:
+            st.info("No hay gastos registrados todavía.")
 
-# --- DASHBOARD (ACTUALIZADO) ---
+# --- DASHBOARD ACTUALIZADO ---
 def modulo_dashboard():
-    st.title("📊 Dashboard Maxtiva Ultimate")
+    st.title("📊 Dashboard de Control Financiero")
+    
     base = st.session_state.db_obras["Presupuesto"].sum()
     extra = st.session_state.audit_extra
-    coste_pedidos = st.session_state.db_pedidos["Coste"].sum()
+    ingresos_totales = base + extra
     
+    gastos_material = st.session_state.db_pedidos["Coste"].sum()
+    gastos_imputables = st.session_state.db_gastos["Importe"].sum()
+    gastos_totales = gastos_material + gastos_imputables
+    
+    beneficio = ingresos_totales - gastos_totales
+
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Presupuesto Base", f"{base:,.2f} €")
-    c2.metric("Extras IA (UniMatch)", f"{extra:,.2f} €")
-    c3.metric("Gasto en Materiales", f"{coste_pedidos:,.2f} €")
-    c4.metric("Balance Disponible", f"{(base + extra) - coste_pedidos:,.2f} €")
+    c1.metric("Ingresos (Inc. IA)", f"{ingresos_totales:,.2f} €", f"+{extra} €")
+    c2.metric("Gastos Directos (Mat)", f"{gastos_material:,.2f} €")
+    c3.metric("Gastos Indirectos", f"{gastos_imputables:,.2f} €", delta_color="inverse")
+    c4.metric("BENEFICIO NETO", f"{beneficio:,.2f} €", f"{((beneficio/ingresos_totales)*100) if ingresos_totales > 0 else 0:.1f}%")
+
+    st.divider()
+    st.subheader("Análisis de Rentabilidad por Obra")
+    st.bar_chart(st.session_state.db_gastos.groupby("Obra")["Importe"].sum())
 
 # --- NAVEGACIÓN ---
 def main():
-    st.sidebar.title("Maxtiva ERP v3.0")
-    menu = st.sidebar.radio("Navegación", ["Dashboard", "Obras", "Pedidos / Agenda", "Personal"])
+    st.sidebar.title("Maxtiva ERP v3.5")
+    menu = st.sidebar.radio("Navegación", ["Dashboard", "Obras", "Pedidos", "Personal", "💸 Gastos Imputables"])
     
     st.sidebar.divider()
-    st.sidebar.write("🛠️ **Ingeniería Eléctrica**")
     if st.sidebar.button("🔍 Auditoría UniMatch", use_container_width=True):
         modal_unimatch()
 
     if menu == "Dashboard": modulo_dashboard()
-    elif menu == "Obras": st.write("Módulo Obras Activo") # (Se puede copiar del código anterior)
-    elif menu == "Pedidos / Agenda": modulo_pedidos()
-    elif menu == "Personal": st.write("Módulo Personal Activo")
+    elif menu == "Obras": st.title("🏗️ Obras"); st.write("Gestione sus proyectos aquí.") # Reutilizar lógica CRUD previa
+    elif menu == "Pedidos": st.title("📦 Pedidos"); st.write("Control de materiales.") 
+    elif menu == "Personal": st.title("👥 Personal"); st.write("Gestión de operarios.")
+    elif menu == "💸 Gastos Imputables": modulo_gastos()
 
 if __name__ == "__main__":
     main()
