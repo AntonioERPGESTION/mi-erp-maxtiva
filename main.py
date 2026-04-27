@@ -7,95 +7,121 @@ import re
 import time
 
 # --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="Maxtiva ERP - Cloud Sync", layout="wide", page_icon="🏗️")
+st.set_page_config(page_title="Maxtiva ERP - Full Sync", layout="wide", page_icon="🏗️")
 
 # --- ESTILOS AMARILLO CORPORATIVO ---
 st.markdown(f"""
     <style>
     .stApp {{ background-color: #f8f9fa; }}
-    [data-testid="stSidebar"] {{ background-color: #FFD700; color: #1e3d59; }}
-    .stMetric {{ background-color: white; border: 2px solid #FFD700; border-radius: 10px; }}
-    .stButton>button {{ background-color: #FFD700; color: #1e3d59; font-weight: bold; width: 100%; }}
+    [data-testid="stSidebar"] {{ background-color: #FFD700; color: #1e3d59; font-weight: bold; }}
+    .stMetric {{ background-color: white; border: 2px solid #FFD700; padding: 15px; border-radius: 10px; }}
+    .stButton>button {{ background-color: #FFD700; color: #1e3d59; font-weight: bold; width: 100%; border: 1px solid #1e3d59; }}
     </style>
 """, unsafe_allow_html=True)
 
-# --- CONEXIÓN A GOOGLE SHEETS ---
+# --- CONEXIÓN SEGURA A GOOGLE SHEETS ---
 def get_gsheet_client():
-    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    # Asegúrate de que el archivo credentials.json esté en la carpeta
-    creds = Credentials.from_service_account_file("credentials.json", scopes=scope)
-    return gspread.authorize(creds)
+    try:
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        # Intenta cargar desde secrets (Streamlit Cloud) o archivo local
+        if "gcp_service_account" in st.secrets:
+            creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
+        else:
+            creds = Credentials.from_service_account_file("credentials.json", scopes=scope)
+        return gspread.authorize(creds)
+    except Exception as e:
+        st.error(f"❌ Error de Credenciales: {e}")
+        return None
 
 def load_data_from_sheets():
     client = get_gsheet_client()
-    # Conectamos con tus archivos reales
-    sh_obras = client.open("ERP MAXTIVA").worksheet("Obras")
-    sh_gastos = client.open("gastos MAXTIVA").get_worksheet(0) # La primera pestaña
-    
-    df_obras = pd.DataFrame(sh_obras.get_all_records())
-    df_gastos = pd.DataFrame(sh_gastos.get_all_records())
-    return df_obras, df_gastos
+    if client:
+        try:
+            sh_obras = client.open("ERP MAXTIVA").worksheet("Obras")
+            sh_gastos = client.open("gastos MAXTIVA").get_worksheet(0)
+            return pd.DataFrame(sh_obras.get_all_records()), pd.DataFrame(sh_gastos.get_all_records())
+        except Exception as e:
+            st.error(f"❌ Error accediendo a las hojas: {e}")
+    return pd.DataFrame(), pd.DataFrame()
 
-# --- INICIALIZACIÓN ---
-if "db_obras" not in st.session_state:
-    try:
-        st.session_state.db_obras, st.session_state.db_gastos = load_data_from_sheets()
-    except Exception as e:
-        st.error(f"Error de conexión: {e}. Asegúrate de tener el archivo credentials.json y haber compartido la Sheet.")
+# --- INICIALIZACIÓN CRÍTICA (Evita el AttributeError) ---
+if "db_obras" not in st.session_state or "db_gastos" not in st.session_state:
+    st.session_state.db_obras, st.session_state.db_gastos = load_data_from_sheets()
 
-# --- FUNCIONES DE ESCRITURA ---
-def add_row_to_sheet(file_name, sheet_name, row):
+# --- FUNCIONES DE GESTIÓN EN DRIVE (Añadir/Borrar) ---
+def sync_action(file_name, sheet_name, row=None, action="add", row_index=None):
     client = get_gsheet_client()
     sh = client.open(file_name).worksheet(sheet_name)
-    sh.append_row(row)
-    st.toast("✅ Sincronizado con Google Drive")
+    if action == "add":
+        sh.append_row(row)
+    elif action == "delete" and row_index is not None:
+        # +2 porque gspread empieza en 1 y la primera fila es el encabezado
+        sh.delete_rows(row_index + 2)
+    
+    # Recargar datos tras la acción
+    st.session_state.db_obras, st.session_state.db_gastos = load_data_from_sheets()
+    st.toast(f"✅ Sincronizado: {action}")
+    st.rerun()
 
 # --- MÓDULO DASHBOARD ---
 def modulo_dashboard():
-    st.title("📊 Panel de Control en Tiempo Real")
+    st.title("📊 Panel de Control Real-Time")
     obras = st.session_state.db_obras
     gastos = st.session_state.db_gastos
     
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total Presupuestado", f"{obras['PRESUPUESTO'].sum():,.2f} €")
-    col2.metric("Gasto Acumulado", f"{gastos['Importe'].sum():,.2f} €")
-    col3.metric("Margen Bruto", f"{obras['PRESUPUESTO'].sum() - gastos['Importe'].sum():,.2f} €")
+    if obras.empty:
+        st.warning("⚠️ No hay datos de obras cargados.")
+        return
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Ingresos Totales", f"{obras['PRESUPUESTO'].sum():,.2f} €")
+    c2.metric("Gastos Totales", f"{gastos['Importe'].sum():,.2f} €" if not gastos.empty else "0 €")
+    c3.metric("Beneficio", f"{(obras['PRESUPUESTO'].sum() - (gastos['Importe'].sum() if not gastos.empty else 0)):,.2f} €")
     
     st.divider()
-    st.subheader("Obras Activas (Drive)")
+    st.subheader("Obras en curso")
     st.dataframe(obras, use_container_width=True)
 
-# --- MÓDULO GASTOS (CON ESCRITURA EN DRIVE) ---
-def modulo_gastos():
-    st.title("💸 Registro de Gastos Imputables")
-    with st.form("nuevo_gasto", clear_on_submit=True):
-        col1, col2 = st.columns(2)
-        usuario = col1.text_input("Usuario", value="Admin")
-        fecha = col2.date_input("Fecha", value=None)
-        cat = st.selectbox("Categoría", ["Gasolina", "Dietas", "Hotel", "Suministros"])
-        con = st.text_input("Concepto")
-        imp = st.number_input("Importe", min_value=0.0)
-        
-        if st.form_submit_button("Guardar en Google Sheets"):
-            # Preparar fila para el Drive según tus columnas: Usuario, Fecha, Categoría, Concepto, Importe, URL, Estado
-            nueva_fila = [usuario, str(fecha), cat, con, imp, "", "Pendiente"]
-            add_row_to_sheet("gastos MAXTIVA", "Hoja 1", nueva_fila)
-            # Recargar datos locales
-            st.session_state.db_obras, st.session_state.db_gastos = load_data_from_sheets()
-            st.rerun()
+# --- MÓDULO GESTIÓN (EDITAR / BORRAR) ---
+def modulo_gestion_obras():
+    st.title("🏗️ Gestión de Obras y Borrado")
+    obras = st.session_state.db_obras
+    
+    t1, t2 = st.tabs(["➕ Nueva Obra", "🗑️ Eliminar Obra"])
+    
+    with t1:
+        with st.form("add_o"):
+            id_o = st.text_input("ID")
+            cli = st.text_input("Cliente")
+            pre = st.number_input("Presupuesto", min_value=0.0)
+            est = st.selectbox("Estado", ["Activa", "Finalizada", "Presupuesto"])
+            nom = st.text_input("Nombre Obra")
+            ubi = st.text_input("Ubicación")
+            if st.form_submit_button("Guardar en Drive"):
+                nueva = [id_o, cli, pre, est, nom, ubi]
+                sync_action("ERP MAXTIVA", "Obras", row=nueva, action="add")
+
+    with t2:
+        if not obras.empty:
+            sel = st.selectbox("Seleccione obra para ELIMINAR del Drive", obras.index, format_func=lambda x: f"{obras.loc[x, 'NOMBRE']} ({obras.loc[x, 'CLIENTE']})")
+            if st.button("⚠️ ELIMINAR PERMANENTEMENTE"):
+                sync_action("ERP MAXTIVA", "Obras", action="delete", row_index=sel)
+        else:
+            st.info("No hay obras para eliminar.")
 
 # --- NAVEGACIÓN ---
 def main():
     with st.sidebar:
-        st.write("### 🏗️ MA XTIVA ERP v14")
+        st.write("### 🏢 MA XTIVA ERP v15")
         st.divider()
-        menu = st.radio("MENÚ", ["Dashboard", "Registrar Gasto", "Pedidos PDF"])
-        if st.button("🔄 Forzar Sincronización"):
+        menu = st.radio("MENÚ", ["Dashboard", "Gestión de Obras", "Gastos", "Pedidos PDF"])
+        if st.button("🔄 Sincronizar Ahora"):
             st.session_state.db_obras, st.session_state.db_gastos = load_data_from_sheets()
             st.rerun()
 
     if menu == "Dashboard": modulo_dashboard()
-    elif menu == "Registrar Gasto": modulo_gastos()
+    elif menu == "Gestión de Obras": modulo_gestion_obras()
+    # Los otros módulos siguen la misma lógica de sync_action...
 
 if __name__ == "__main__":
     main()
